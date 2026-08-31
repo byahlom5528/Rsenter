@@ -3,7 +3,7 @@
  */
 
 export interface MediaEmbedInfo {
-  type: 'youtube' | 'direct_video' | 'external_doc' | 'empty';
+  type: 'youtube' | 'google_drive' | 'loom' | 'direct_video' | 'external_doc' | 'empty';
   embedUrl: string | null;
   rawUrl: string;
 }
@@ -11,10 +11,9 @@ export interface MediaEmbedInfo {
 /**
  * Parses any video/document URL and returns normalized embed info.
  * Supports:
- * - https://www.youtube.com/watch?v=VIDEO_ID
- * - https://youtu.be/VIDEO_ID
- * - https://www.youtube.com/shorts/VIDEO_ID
- * - https://www.youtube.com/embed/VIDEO_ID
+ * - YouTube (watch, youtu.be, shorts, embed)
+ * - Google Drive (preview)
+ * - Loom
  * - Direct video files (.mp4, .webm, .ogg)
  * - Standard web links / docs
  */
@@ -26,7 +25,6 @@ export function getMediaInfo(url?: string | null): MediaEmbedInfo {
   const rawUrl = url.trim();
 
   // 1. YouTube Matchers
-  // Matches: youtube.com/watch?v=ID, youtu.be/ID, youtube.com/embed/ID, youtube.com/shorts/ID
   const youtubeRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/|youtube\.com\/shorts\/)([^"&?\/\s]{11})/i;
   const ytMatch = rawUrl.match(youtubeRegex);
 
@@ -39,7 +37,29 @@ export function getMediaInfo(url?: string | null): MediaEmbedInfo {
     };
   }
 
-  // 2. Direct HTML5 Video File Matcher
+  // 2. Google Drive Matcher (convert view/share to preview)
+  const gDriveMatch = rawUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  if (gDriveMatch && gDriveMatch[1]) {
+    const fileId = gDriveMatch[1];
+    return {
+      type: 'google_drive',
+      embedUrl: `https://drive.google.com/file/d/${fileId}/preview`,
+      rawUrl,
+    };
+  }
+
+  // 3. Loom Video Matcher
+  const loomMatch = rawUrl.match(/loom\.com\/share\/([a-zA-Z0-9]+)/i);
+  if (loomMatch && loomMatch[1]) {
+    const loomId = loomMatch[1];
+    return {
+      type: 'loom',
+      embedUrl: `https://www.loom.com/embed/${loomId}`,
+      rawUrl,
+    };
+  }
+
+  // 4. Direct HTML5 Video File Matcher
   const isDirectVideo = /\.(mp4|webm|ogg|mov)(\?.*)?$/i.test(rawUrl);
   if (isDirectVideo) {
     return {
@@ -49,7 +69,7 @@ export function getMediaInfo(url?: string | null): MediaEmbedInfo {
     };
   }
 
-  // 3. Fallback: External Document / Web link
+  // 5. Fallback: External Document / Web link
   return {
     type: 'external_doc',
     embedUrl: null,

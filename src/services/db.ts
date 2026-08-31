@@ -258,12 +258,15 @@ class DBService {
   }
 
   async deleteRole(id: string): Promise<boolean> {
+    const deletedTaskIds = this.tasks.filter((t) => t.role_id === id).map((t) => t.id);
+
     if (isSupabaseConfigured && supabase) {
       try {
         const { error } = await supabase.from('roles').delete().eq('id', id);
         if (!error) {
           this.roles = this.roles.filter((r) => r.id !== id);
           this.tasks = this.tasks.filter((t) => t.role_id !== id);
+          this.progress = this.progress.filter((p) => !deletedTaskIds.includes(p.task_id));
           this.users = this.users.map((u) => (u.role_id === id ? { ...u, role_id: null } : u));
           this.saveAll();
           this.notify();
@@ -277,6 +280,7 @@ class DBService {
     const initialLen = this.roles.length;
     this.roles = this.roles.filter((r) => r.id !== id);
     this.tasks = this.tasks.filter((t) => t.role_id !== id);
+    this.progress = this.progress.filter((p) => !deletedTaskIds.includes(p.task_id));
     this.users = this.users.map((u) => (u.role_id === id ? { ...u, role_id: null } : u));
     this.saveAll();
     this.notify();
@@ -610,19 +614,31 @@ class DBService {
       .filter((t) => t.role_id === roleId)
       .sort((a, b) => a.step_order - b.step_order);
 
-    for (let i = 0; i < roleTasks.length; i++) {
-      const expectedStep = i + 1;
-      if (roleTasks[i].step_order !== expectedStep) {
-        roleTasks[i].step_order = expectedStep;
-        if (isSupabaseConfigured && supabase && isValidUUID(roleTasks[i].id)) {
-          try {
-            await supabase.from('tasks').update({ step_order: expectedStep }).eq('id', roleTasks[i].id);
-          } catch (e) {
-            console.warn('Error updating step_order in Supabase', e);
+    if (isSupabaseConfigured && supabase) {
+      try {
+        // Phase 1: Set temporary high offsets to prevent unique key constraint collisions
+        for (let i = 0; i < roleTasks.length; i++) {
+          if (isValidUUID(roleTasks[i].id)) {
+            await supabase.from('tasks').update({ step_order: 1000 + i }).eq('id', roleTasks[i].id);
           }
         }
+        // Phase 2: Set exact sequential 1..N order
+        for (let i = 0; i < roleTasks.length; i++) {
+          const expectedStep = i + 1;
+          roleTasks[i].step_order = expectedStep;
+          if (isValidUUID(roleTasks[i].id)) {
+            await supabase.from('tasks').update({ step_order: expectedStep }).eq('id', roleTasks[i].id);
+          }
+        }
+      } catch (e) {
+        console.warn('Error updating step_order in Supabase', e);
+      }
+    } else {
+      for (let i = 0; i < roleTasks.length; i++) {
+        roleTasks[i].step_order = i + 1;
       }
     }
+
     setStored(STORAGE_KEYS.TASKS, this.tasks);
   }
 
@@ -636,6 +652,17 @@ class DBService {
 
     if (isSupabaseConfigured && supabase) {
       try {
+        // Phase 1: Set temporary high offsets to avoid unique constraint (role_id, step_order) collisions
+        for (let i = 0; i < orderedTaskIds.length; i++) {
+          const taskId = orderedTaskIds[i];
+          if (isValidUUID(taskId)) {
+            await supabase
+              .from('tasks')
+              .update({ step_order: 1000 + i })
+              .eq('id', taskId);
+          }
+        }
+        // Phase 2: Set exact sequential order
         for (let i = 0; i < orderedTaskIds.length; i++) {
           const taskId = orderedTaskIds[i];
           if (isValidUUID(taskId)) {

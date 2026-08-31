@@ -11,7 +11,6 @@ import {
   Edit3, 
   ArrowUp, 
   ArrowDown, 
-  Eye, 
   X, 
   CheckCircle2, 
   AlertCircle,
@@ -19,7 +18,8 @@ import {
   GraduationCap,
   Award,
   Check,
-  TrendingUp
+  TrendingUp,
+  RotateCcw
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../services/db';
@@ -141,16 +141,21 @@ export const AdminPage: React.FC = () => {
       return;
     }
 
+    const escapeCSV = (val: string | number | undefined | null) => {
+      const str = String(val ?? '').replace(/"/g, '""');
+      return `"${str}"`;
+    };
+
     const headers = ['שם מלא', 'מספר אישי', 'תפקיד', 'תאריך כניסה', 'אחוז השלמה', 'משימות שהושלמו', 'סה"כ משימות', 'פעילות אחרונה'];
     const rows = userOverviews.map((item) => [
-      `"${item.user.full_name}"`,
-      `"${item.user.personal_id}"`,
-      `"${item.role?.name || 'ללא תפקיד'}"`,
-      `"${item.user.entry_date}"`,
-      `"${item.completionPercentage}%"`,
-      `"${item.completedTasks}"`,
-      `"${item.totalTasks}"`,
-      `"${item.lastActive ? new Date(item.lastActive).toLocaleDateString('he-IL') : '-'}"`
+      escapeCSV(item.user.full_name),
+      escapeCSV(item.user.personal_id),
+      escapeCSV(item.role?.name || 'ללא תפקיד'),
+      escapeCSV(item.user.entry_date),
+      escapeCSV(`${item.completionPercentage}%`),
+      escapeCSV(item.completedTasks),
+      escapeCSV(item.totalTasks),
+      escapeCSV(item.lastActive ? new Date(item.lastActive).toLocaleDateString('he-IL') : '-')
     ]);
 
     const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -163,6 +168,24 @@ export const AdminPage: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     showStatus('דוח החניכים יוצא בהצלחה לקובץ CSV!');
+  };
+
+  const handleResetUserProgress = async (userId: string, userName: string) => {
+    if (window.confirm(`האם אתה בטוח שברצונך לאפס את כל התקדמות המשימות של החניך "${userName}"? כל המשימות יסומנו מחדש כטרם הושלמו.`)) {
+      try {
+        await db.resetUserProgress(userId);
+        showStatus(`ההתקדמות של "${userName}" אופסה בהצלחה.`);
+        const overviews = await db.getAllUsersProgressOverview();
+        setUserOverviews(overviews);
+        const freshUserOverview = overviews.find((o) => o.user.id === userId);
+        if (freshUserOverview) {
+          setSelectedUserOverview(freshUserOverview);
+        }
+      } catch (err) {
+        console.error('Failed to reset user progress', err);
+        showStatus('שגיאה באיפוס התקדמות החניך', 'error');
+      }
+    }
   };
 
   // ==================== TASK CMS HANDLERS ====================
@@ -385,6 +408,23 @@ export const AdminPage: React.FC = () => {
       const res = await db.getBackpackResources();
       setBackpackResources(res);
     }
+  };
+
+  // Helper to prevent circular parent references in the org tree hierarchy
+  const getDescendantIds = (nodeId: string, allNodes: OrgNode[]): Set<string> => {
+    const descendants = new Set<string>();
+    const stack = [nodeId];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      const children = allNodes.filter((n) => n.parent_id === current);
+      for (const child of children) {
+        if (!descendants.has(child.id)) {
+          descendants.add(child.id);
+          stack.push(child.id);
+        }
+      }
+    }
+    return descendants;
   };
 
   // ==================== ORG TREE CMS HANDLERS ====================
@@ -635,7 +675,7 @@ export const AdminPage: React.FC = () => {
                     <th className="py-3.5 px-4">תאריך כניסה</th>
                     <th className="py-3.5 px-4">התקדמות במשימות</th>
                     <th className="py-3.5 px-4">פעילות אחרונה</th>
-                    <th className="py-3.5 px-4 text-center">פירוט ותשובות</th>
+                    <th className="py-3.5 px-4 text-center">פעולות</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -647,9 +687,19 @@ export const AdminPage: React.FC = () => {
                     </tr>
                   ) : (
                     filteredUserOverviews.map((item) => (
-                      <tr key={item.user.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-3.5 px-4 font-bold text-slate-900">
-                          {item.user.full_name}
+                      <tr 
+                        key={item.user.id} 
+                        onClick={() => setSelectedUserOverview(item)}
+                        className="hover:bg-brand-50/60 cursor-pointer transition-colors group"
+                        title="לחץ לצפייה בפירוט התקדמות ומשימות החניך"
+                      >
+                        <td className="py-3.5 px-4 font-bold text-slate-900 group-hover:text-brand-700 transition-colors">
+                          <div className="flex items-center gap-2">
+                            <span>{item.user.full_name}</span>
+                            {item.completionPercentage === 100 && (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 inline shrink-0" />
+                            )}
+                          </div>
                         </td>
                         <td className="py-3.5 px-4 font-mono font-bold text-slate-600">
                           {item.user.personal_id}
@@ -682,18 +732,10 @@ export const AdminPage: React.FC = () => {
                           {item.lastActive ? new Date(item.lastActive).toLocaleDateString('he-IL') : '-'}
                         </td>
                         <td className="py-3.5 px-4 text-center">
-                          <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              onClick={() => setSelectedUserOverview(item)}
-                              className="inline-flex items-center gap-1.5 bg-brand-50 hover:bg-brand-100 text-brand-700 text-xs font-bold px-3 py-1.5 rounded-lg border border-brand-200 transition-colors"
-                              title="עיון במשימות החניך"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                              <span>עיון</span>
-                            </button>
-
+                          <div className="flex items-center justify-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                             {item.user.personal_id !== '0000000' && (
                               <button
+                                type="button"
                                 onClick={() => handleDeleteUser(item.user.id, item.user.full_name)}
                                 className="inline-flex items-center p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg border border-slate-200 transition-colors"
                                 title="מחק משתמש לצמיתות"
@@ -715,20 +757,20 @@ export const AdminPage: React.FC = () => {
           {selectedUserOverview && (
             <div 
               onClick={() => setSelectedUserOverview(null)}
-              className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-end p-4"
+              className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center sm:justify-end p-2 sm:p-4 pb-safe"
             >
               <div 
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white w-full max-w-xl h-full max-h-[92vh] rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in slide-in-from-left duration-300"
+                className="bg-white w-full max-w-xl h-full max-h-[86vh] sm:max-h-[90vh] rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden animate-in slide-in-from-left duration-300"
               >
                 
                 {/* Drawer Header */}
-                <div className="p-5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+                <div className="p-4 sm:p-5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
                   <div>
                     <span className="text-xs font-semibold text-brand-300 block mb-1">
                       דוח מעקב חניך מפורט
                     </span>
-                    <h3 className="text-lg font-bold text-white">
+                    <h3 className="text-base sm:text-lg font-bold text-white">
                       {selectedUserOverview.user.full_name} ({selectedUserOverview.user.personal_id})
                     </h3>
                     <p className="text-xs text-slate-400">
@@ -738,14 +780,14 @@ export const AdminPage: React.FC = () => {
 
                   <button
                     onClick={() => setSelectedUserOverview(null)}
-                    className="w-8 h-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors"
+                    className="w-8 h-8 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center transition-colors shrink-0"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
 
                 {/* Drawer Body: Tasks & Answers List */}
-                <div className="p-6 overflow-y-auto flex-1 space-y-4">
+                <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4 pb-20 custom-scrollbar overscroll-contain">
                   <div className="flex items-center justify-between bg-slate-50 p-4 rounded-xl border border-slate-200 mb-2">
                     <div>
                       <span className="text-xs text-slate-500 font-bold block">שיעור השלמה</span>
@@ -834,19 +876,31 @@ export const AdminPage: React.FC = () => {
                   })}
                 </div>
 
-                <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
-                  {selectedUserOverview.user.personal_id !== '0000000' ? (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteUser(selectedUserOverview.user.id, selectedUserOverview.user.full_name)}
-                      className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>מחק משתמש זה לצמיתות</span>
-                    </button>
-                  ) : (
-                    <div></div>
-                  )}
+                <div className="p-3.5 sm:p-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0 z-10 shadow-xs">
+                  <div className="flex items-center gap-2">
+                    {selectedUserOverview.user.personal_id !== '0000000' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleResetUserProgress(selectedUserOverview.user.id, selectedUserOverview.user.full_name)}
+                          className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300/80 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
+                          title="איפוס כל התקדמות המשימות לחניך זה"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                          <span>אפס התקדמות</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteUser(selectedUserOverview.user.id, selectedUserOverview.user.full_name)}
+                          className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>מחק משתמש</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
 
                   <button
                     onClick={() => setSelectedUserOverview(null)}
@@ -1014,11 +1068,11 @@ export const AdminPage: React.FC = () => {
           {isRoleModalOpen && (
             <div 
               onClick={() => setIsRoleModalOpen(false)}
-              className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+              className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 pb-safe"
             >
               <div 
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-slate-200 p-6 overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+                className="bg-white w-full max-w-md max-h-[86vh] sm:max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl border border-slate-200 p-6 animate-in fade-in zoom-in-95 duration-200"
               >
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
                   <h3 className="font-bold text-base text-slate-900">
@@ -1078,11 +1132,11 @@ export const AdminPage: React.FC = () => {
           {isTaskModalOpen && editingTask && (
             <div 
               onClick={() => setIsTaskModalOpen(false)}
-              className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+              className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 pb-safe"
             >
               <div 
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 p-6 max-h-[90vh] overflow-y-auto"
+                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 p-6 max-h-[86vh] sm:max-h-[90vh] overflow-y-auto"
               >
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 sticky top-0 bg-white z-10">
                   <h3 className="font-bold text-base text-slate-900">
@@ -1241,11 +1295,11 @@ export const AdminPage: React.FC = () => {
           {isResourceModalOpen && editingResource && (
             <div 
               onClick={() => setIsResourceModalOpen(false)}
-              className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+              className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 pb-safe"
             >
               <div 
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 p-6 max-h-[90vh] overflow-y-auto"
+                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 p-6 max-h-[86vh] sm:max-h-[90vh] overflow-y-auto"
               >
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 sticky top-0 bg-white z-10">
                   <h3 className="font-bold text-base text-slate-900">
@@ -1403,11 +1457,11 @@ export const AdminPage: React.FC = () => {
           {isNodeModalOpen && editingNode && (
             <div 
               onClick={() => setIsNodeModalOpen(false)}
-              className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+              className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 pb-safe"
             >
               <div 
                 onClick={(e) => e.stopPropagation()}
-                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 p-6 max-h-[90vh] overflow-y-auto"
+                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-200 p-6 max-h-[86vh] sm:max-h-[90vh] overflow-y-auto"
               >
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 sticky top-0 bg-white z-10">
                   <h3 className="font-bold text-base text-slate-900">
@@ -1452,7 +1506,11 @@ export const AdminPage: React.FC = () => {
                     >
                       <option value="">-- ללא ממונה (ראש הפירמידה / מפקד יחידה) --</option>
                       {orgNodes
-                        .filter((n) => n.id !== editingNode.id)
+                        .filter((n) => {
+                          if (!editingNode.id) return true;
+                          const descendants = getDescendantIds(editingNode.id, orgNodes);
+                          return n.id !== editingNode.id && !descendants.has(n.id);
+                        })
                         .map((n) => (
                           <option key={n.id} value={n.id}>
                             {n.title} ({n.holder_name})

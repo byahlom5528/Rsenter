@@ -129,13 +129,15 @@ export const DashboardPage: React.FC = () => {
     
     const currentAnswer = answersState[task.id] || '';
 
-    // If task requires answer, validate it
-    if ((task.type === 'media_question' || task.type === 'text_question') && !currentAnswer.trim()) {
-      setErrorMessages({
-        ...errorMessages,
-        [task.id]: 'יש להזין תשובה מפורטת לפני סיום המשימה.',
-      });
-      return;
+    // If task requires answer, validate it with minimum 4 characters
+    if (task.type === 'media_question' || task.type === 'text_question') {
+      if (!currentAnswer.trim() || currentAnswer.trim().length < 4) {
+        setErrorMessages({
+          ...errorMessages,
+          [task.id]: 'יש להזין תשובה מפורטת ומשמעותית (לפחות 4 תווים) לפני סיום המשימה.',
+        });
+        return;
+      }
     }
 
     setSubmittingTaskId(task.id);
@@ -503,8 +505,8 @@ export const DashboardPage: React.FC = () => {
                       </div>
                       
                       <div className="w-full bg-black">
-                        {mediaInfo.type === 'youtube' && mediaInfo.embedUrl ? (
-                          <div className="aspect-video w-full max-h-[360px]">
+                        {(mediaInfo.type === 'youtube' || mediaInfo.type === 'google_drive' || mediaInfo.type === 'loom') && mediaInfo.embedUrl ? (
+                          <div className="aspect-video w-full max-h-[380px]">
                             <iframe
                               src={mediaInfo.embedUrl}
                               title={task.title}
