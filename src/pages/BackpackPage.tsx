@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Briefcase, 
   Search, 
@@ -55,17 +55,24 @@ export const BackpackPage: React.FC = () => {
   }, []);
 
   // Extract dynamic list of categories
-  const categories = ['all', ...Array.from(new Set(resources.map((r) => r.category)))];
+  const categories = useMemo(() => {
+    return ['all', ...Array.from(new Set(resources.map((r) => r.category)))];
+  }, [resources]);
 
   // Filtering
-  const filteredResources = resources.filter((res) => {
-    const matchesCategory = selectedCategory === 'all' || res.category === selectedCategory;
-    const matchesSearch = 
-      res.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      res.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      res.category.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  const filteredResources = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    return resources.filter((res) => {
+      const matchesCategory = selectedCategory === 'all' || res.category === selectedCategory;
+      if (!matchesCategory) return false;
+      if (!term) return true;
+      return (
+        res.title.toLowerCase().includes(term) ||
+        res.description.toLowerCase().includes(term) ||
+        res.category.toLowerCase().includes(term)
+      );
+    });
+  }, [resources, selectedCategory, searchTerm]);
 
   const getCategoryIcon = (category: string) => {
     switch (category) {

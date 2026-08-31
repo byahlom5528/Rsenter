@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
   CheckCircle2, 
@@ -100,11 +100,18 @@ export const DashboardPage: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser]);
 
-  // Calculate stats
-  const totalTasks = tasksWithProgress.length;
-  const completedTasks = tasksWithProgress.filter((t) => t.progress?.is_completed).length;
-  const progressPercent = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-  const isAllCompleted = totalTasks > 0 && completedTasks === totalTasks;
+  // Memoize task stats
+  const { totalTasks, completedTasks, progressPercent, isAllCompleted } = useMemo(() => {
+    const total = tasksWithProgress.length;
+    const completed = tasksWithProgress.filter((t) => t.progress?.is_completed).length;
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return {
+      totalTasks: total,
+      completedTasks: completed,
+      progressPercent: percent,
+      isAllCompleted: total > 0 && completed === total,
+    };
+  }, [tasksWithProgress]);
 
   // Calculate days in role
   const calculateDaysInRole = () => {
@@ -134,7 +141,7 @@ export const DashboardPage: React.FC = () => {
       if (!currentAnswer.trim() || currentAnswer.trim().length < 4) {
         setErrorMessages({
           ...errorMessages,
-          [task.id]: 'יש להזין תשובה מפורטת ומשמעותית (לפחות 4 תווים) לפני סיום המשימה.',
+          [task.id]: 'נא למלא תשובה מנומקת (לפחות 4 תווים) כדי להשלים שלב זה.',
         });
         return;
       }
@@ -145,8 +152,8 @@ export const DashboardPage: React.FC = () => {
 
     try {
       await db.completeTask(currentUser.id, task.id, currentAnswer.trim() || undefined);
-      setEditingAnswerTaskId(null);
       triggerConfetti();
+      setEditingAnswerTaskId(null);
       await loadDashboardData();
       await refreshUserData();
     } catch (err) {
@@ -160,11 +167,11 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
-  const filteredTasks = tasksWithProgress.filter((t) => {
-    if (filter === 'pending') return !t.progress?.is_completed;
-    if (filter === 'completed') return t.progress?.is_completed;
-    return true;
-  });
+  const filteredTasks = useMemo(() => {
+    if (filter === 'pending') return tasksWithProgress.filter((t) => !t.progress?.is_completed);
+    if (filter === 'completed') return tasksWithProgress.filter((t) => t.progress?.is_completed);
+    return tasksWithProgress;
+  }, [tasksWithProgress, filter]);
 
   if (isLoading) {
     return (
@@ -506,14 +513,30 @@ export const DashboardPage: React.FC = () => {
                       
                       <div className="w-full bg-black">
                         {(mediaInfo.type === 'youtube' || mediaInfo.type === 'google_drive' || mediaInfo.type === 'loom') && mediaInfo.embedUrl ? (
-                          <div className="aspect-video w-full max-h-[380px]">
-                            <iframe
-                              src={mediaInfo.embedUrl}
-                              title={task.title}
-                              className="w-full h-full border-0"
-                              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                              allowFullScreen
-                            ></iframe>
+                          <div>
+                            <div className="aspect-video w-full max-h-[380px]">
+                              <iframe
+                                src={mediaInfo.embedUrl}
+                                title={task.title}
+                                className="w-full h-full border-0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                allowFullScreen
+                              ></iframe>
+                            </div>
+                            {mediaInfo.type === 'google_drive' && (
+                              <div className="bg-slate-900/90 px-3 py-2 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-300">
+                                <span>💡 אם הקובץ לא נטען או דורש הרשאה:</span>
+                                <a
+                                  href={ensureValidUrl(task.media_url)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-brand-400 hover:text-brand-300 font-bold underline flex items-center gap-1 bg-brand-500/10 px-2 py-0.5 rounded border border-brand-500/20"
+                                >
+                                  <span>פתיחה ישירה ב-Google Drive</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              </div>
+                            )}
                           </div>
                         ) : mediaInfo.type === 'direct_video' && mediaInfo.embedUrl ? (
                           <div className="w-full max-h-[360px] flex justify-center bg-black">

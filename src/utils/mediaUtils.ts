@@ -37,13 +37,25 @@ export function getMediaInfo(url?: string | null): MediaEmbedInfo {
     };
   }
 
-  // 2. Google Drive Matcher (convert view/share to preview)
-  const gDriveMatch = rawUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i);
+  // 2. Google Drive & Google Docs Matchers (convert view/share/edit to preview)
+  const gDriveMatch = rawUrl.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/i) ||
+                      rawUrl.match(/drive\.google\.com\/open\?id=([a-zA-Z0-9_-]+)/i);
   if (gDriveMatch && gDriveMatch[1]) {
     const fileId = gDriveMatch[1];
     return {
       type: 'google_drive',
       embedUrl: `https://drive.google.com/file/d/${fileId}/preview`,
+      rawUrl,
+    };
+  }
+
+  const gDocsMatch = rawUrl.match(/docs\.google\.com\/(document|spreadsheets|presentation)\/d\/([a-zA-Z0-9_-]+)/i);
+  if (gDocsMatch && gDocsMatch[1] && gDocsMatch[2]) {
+    const docType = gDocsMatch[1];
+    const docId = gDocsMatch[2];
+    return {
+      type: 'google_drive',
+      embedUrl: `https://docs.google.com/${docType}/d/${docId}/preview`,
       rawUrl,
     };
   }

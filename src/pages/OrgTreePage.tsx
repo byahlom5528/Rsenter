@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Network, 
   Search, 
@@ -40,6 +40,7 @@ export const OrgTreePage: React.FC = () => {
   // Zoom & Pan state
   const [zoom, setZoom] = useState(1);
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
 
@@ -61,7 +62,10 @@ export const OrgTreePage: React.FC = () => {
   useEffect(() => {
     loadOrgData();
     const unsubscribe = db.subscribe(loadOrgData);
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, []);
 
   // Listen to Escape key to close mobile drawer
@@ -109,7 +113,7 @@ export const OrgTreePage: React.FC = () => {
     }
   }, [isLoading, viewMode]);
 
-  // Mouse pan handlers for smooth canvas navigation in 2D
+  // Mouse pan handlers with requestAnimationFrame for 60/120fps smooth scrolling
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!chartContainerRef.current) return;
     if ((e.target as HTMLElement).closest('button, input, select, a, .node-card')) return;
@@ -124,20 +128,26 @@ export const OrgTreePage: React.FC = () => {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isDragging || !chartContainerRef.current) return;
-    e.preventDefault();
-    const x = e.pageX - chartContainerRef.current.offsetLeft;
-    const y = e.pageY - chartContainerRef.current.offsetTop;
-    const walkX = (x - dragStart.x) * 1.3;
-    const walkY = (y - dragStart.y) * 1.3;
-    chartContainerRef.current.scrollLeft = dragStart.scrollLeft - walkX;
-    chartContainerRef.current.scrollTop = dragStart.scrollTop - walkY;
+    const pageX = e.pageX;
+    const pageY = e.pageY;
+    
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      if (!chartContainerRef.current) return;
+      const x = pageX - chartContainerRef.current.offsetLeft;
+      const y = pageY - chartContainerRef.current.offsetTop;
+      const walkX = (x - dragStart.x) * 1.25;
+      const walkY = (y - dragStart.y) * 1.25;
+      chartContainerRef.current.scrollLeft = dragStart.scrollLeft - walkX;
+      chartContainerRef.current.scrollTop = dragStart.scrollTop - walkY;
+    });
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
   };
 
-  // Touch pan handlers for mobile 2D free panning
+  // Touch pan handlers with requestAnimationFrame
   const [touchStart, setTouchStart] = useState({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
   const [isTouchPanning, setIsTouchPanning] = useState(false);
 
@@ -157,20 +167,27 @@ export const OrgTreePage: React.FC = () => {
   const handleTouchMove = (e: React.TouchEvent) => {
     if (!isTouchPanning || !chartContainerRef.current || e.touches.length !== 1) return;
     const touch = e.touches[0];
-    const x = touch.pageX - chartContainerRef.current.offsetLeft;
-    const y = touch.pageY - chartContainerRef.current.offsetTop;
-    const walkX = (x - touchStart.x) * 1.2;
-    const walkY = (y - touchStart.y) * 1.2;
-    chartContainerRef.current.scrollLeft = touchStart.scrollLeft - walkX;
-    chartContainerRef.current.scrollTop = touchStart.scrollTop - walkY;
+    const pageX = touch.pageX;
+    const pageY = touch.pageY;
+
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      if (!chartContainerRef.current) return;
+      const x = pageX - chartContainerRef.current.offsetLeft;
+      const y = pageY - chartContainerRef.current.offsetTop;
+      const walkX = (x - touchStart.x) * 1.15;
+      const walkY = (y - touchStart.y) * 1.15;
+      chartContainerRef.current.scrollLeft = touchStart.scrollLeft - walkX;
+      chartContainerRef.current.scrollTop = touchStart.scrollTop - walkY;
+    });
   };
 
   const handleTouchEnd = () => {
     setIsTouchPanning(false);
   };
 
-  // Robust Tree Builder with Cycle Detection and Orphan Node Support
-  const buildCycleSafeTree = (): TreeNode[] => {
+  // Memoized cycle-safe tree builder
+  const treeData = useMemo(() => {
     if (nodes.length === 0) return [];
 
     const nodeIds = new Set(nodes.map((n) => n.id));
@@ -181,7 +198,6 @@ export const OrgTreePage: React.FC = () => {
         .filter((n) => {
           if (visited.has(n.id)) return false;
           if (parentId === null) {
-            // Root node: parent_id is null OR parent does not exist in node list (orphan)
             return !n.parent_id || !nodeIds.has(n.parent_id);
           }
           return n.parent_id === parentId;
@@ -197,7 +213,6 @@ export const OrgTreePage: React.FC = () => {
 
     const tree = buildSubTree(null);
 
-    // Any node not reached due to disconnected cycles -> add as root-level fallback
     nodes.forEach((n) => {
       if (!visited.has(n.id)) {
         visited.add(n.id);
@@ -209,14 +224,22 @@ export const OrgTreePage: React.FC = () => {
     });
 
     return tree;
-  };
+  }, [nodes]);
 
-  const treeData = buildCycleSafeTree();
+  // Memoized relative interfaces map for all nodes
+  const nodeInterfacesMap = useMemo(() => {
+    const map = new Map<string, SimplifiedRoleInterface>();
+    nodes.forEach((n) => {
+      map.set(n.id, getSimplifiedRoleInterface(currentRole, n));
+    });
+    return map;
+  }, [nodes, currentRole]);
 
   // Selected Relative Interface
-  const relativeInterface: SimplifiedRoleInterface | null = selectedNode
-    ? getSimplifiedRoleInterface(currentRole, selectedNode)
-    : null;
+  const relativeInterface: SimplifiedRoleInterface | null = useMemo(() => {
+    if (!selectedNode) return null;
+    return nodeInterfacesMap.get(selectedNode.id) || getSimplifiedRoleInterface(currentRole, selectedNode);
+  }, [selectedNode, currentRole, nodeInterfacesMap]);
 
   // Render Visual Chart Tree Node
   const renderTreeNode = (node: TreeNode, level: number = 1) => {
@@ -224,8 +247,8 @@ export const OrgTreePage: React.FC = () => {
     const hasChildren = node.children && node.children.length > 0;
     const isCollapsed = collapsedNodes[node.id];
     
-    // Relative info for this node
-    const nodeRelative = getSimplifiedRoleInterface(currentRole, node);
+    // Relative info from memoized map
+    const nodeRelative = nodeInterfacesMap.get(node.id) || getSimplifiedRoleInterface(currentRole, node);
     const isDirectInterface = nodeRelative.relationshipBadge.includes('ממשק') || nodeRelative.relationshipBadge.includes('פיקוד') || nodeRelative.isMyNode;
 
     const isMatch = searchTerm.trim() !== '' && (

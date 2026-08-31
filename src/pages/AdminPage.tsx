@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ShieldAlert, 
   Users, 
@@ -74,8 +74,8 @@ export const AdminPage: React.FC = () => {
     setTimeout(() => setStatusMessage(null), 4000);
   };
 
-  const loadAllData = async () => {
-    setIsLoading(true);
+  const loadAllData = async (showSpinner = false) => {
+    if (showSpinner) setIsLoading(true);
     try {
       const [overviews, allRoles, resources, nodes] = await Promise.all([
         db.getAllUsersProgressOverview(),
@@ -104,9 +104,9 @@ export const AdminPage: React.FC = () => {
   };
 
   useEffect(() => {
-    loadAllData();
+    loadAllData(true);
     const unsubscribe = db.subscribe(() => {
-      loadAllData();
+      loadAllData(false);
     });
     return () => unsubscribe();
   }, []);
@@ -482,23 +482,34 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  // User list filter
-  const filteredUserOverviews = userOverviews.filter((item) => {
-    const term = userSearchTerm.toLowerCase();
-    return (
-      item.user.full_name.toLowerCase().includes(term) ||
-      item.user.personal_id.includes(term) ||
-      (item.role?.name.toLowerCase().includes(term) ?? false)
-    );
-  });
+  // Memoized User list filter
+  const filteredUserOverviews = useMemo(() => {
+    const term = userSearchTerm.trim().toLowerCase();
+    if (!term) return userOverviews;
+    return userOverviews.filter((item) => {
+      return (
+        item.user.full_name.toLowerCase().includes(term) ||
+        item.user.personal_id.includes(term) ||
+        (item.role?.name.toLowerCase().includes(term) ?? false)
+      );
+    });
+  }, [userOverviews, userSearchTerm]);
 
-  // KPI Analytics calculations
-  const totalTrainees = userOverviews.length;
-  const certifiedTrainees = userOverviews.filter((u) => u.completionPercentage === 100).length;
-  const inProgressTrainees = userOverviews.filter((u) => u.completionPercentage > 0 && u.completionPercentage < 100).length;
-  const avgCompletion = totalTrainees > 0 
-    ? Math.round(userOverviews.reduce((acc, curr) => acc + curr.completionPercentage, 0) / totalTrainees) 
-    : 0;
+  // Memoized KPI Analytics calculations
+  const { totalTrainees, certifiedTrainees, inProgressTrainees, avgCompletion } = useMemo(() => {
+    const total = userOverviews.length;
+    const certified = userOverviews.filter((u) => u.completionPercentage === 100).length;
+    const inProgress = userOverviews.filter((u) => u.completionPercentage > 0 && u.completionPercentage < 100).length;
+    const avg = total > 0 
+      ? Math.round(userOverviews.reduce((acc, curr) => acc + curr.completionPercentage, 0) / total) 
+      : 0;
+    return {
+      totalTrainees: total,
+      certifiedTrainees: certified,
+      inProgressTrainees: inProgress,
+      avgCompletion: avg,
+    };
+  }, [userOverviews]);
 
   return (
     <div className="space-y-6 sm:space-y-8">
