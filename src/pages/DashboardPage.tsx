@@ -310,10 +310,10 @@ export const DashboardPage: React.FC = () => {
 
       {/* 3. Filter Tabs & Task Counter Header */}
       {totalTasks > 0 && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200">
+        <div className="sticky top-14 md:top-16 z-30 bg-slate-50/95 backdrop-blur-md py-2.5 -mx-3.5 px-3.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-lg sm:text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-              <span>מפת משימות רציפה (Workflow)</span>
+              <span>מסלול משימות רציף</span>
               <span className="text-[11px] sm:text-xs bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded-full border border-slate-200">
                 {tasksWithProgress.length} שלבים
               </span>

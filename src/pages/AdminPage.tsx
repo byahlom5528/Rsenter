@@ -13,7 +13,6 @@ import {
   ArrowDown, 
   Eye, 
   X, 
-  RefreshCcw, 
   CheckCircle2, 
   AlertCircle,
   Download,
@@ -134,13 +133,6 @@ export const AdminPage: React.FC = () => {
     setCurrentRoleTasks(tasks);
   };
 
-  // Reset database handler
-  const handleResetDB = () => {
-    if (window.confirm('האם אתה בטוח שברצונך לאפס את כל הנתונים לברירת המחדל ההתחלתית? פעולה זו תשחזר את נתוני ההדגמה.')) {
-      db.resetToDefaults();
-      showStatus('כל הנתונים אופסו בהצלחה לערכי ברירת המחדל.');
-    }
-  };
 
   // ==================== CSV EXPORT ====================
   const handleExportCSV = () => {
@@ -489,15 +481,6 @@ export const AdminPage: React.FC = () => {
               ניהול כולל של מעקב חניכים, עריכת תוכניות הכשרה, ספריית משאבים ועץ המבנה הארגוני.
             </p>
           </div>
-
-          <button
-            onClick={handleResetDB}
-            className="flex items-center gap-2 bg-white/10 hover:bg-white/20 text-amber-200 border border-amber-300/30 px-3.5 py-2 rounded-xl font-bold text-xs transition-colors self-start md:self-auto"
-            title="איפוס נתוני הדגמה"
-          >
-            <RefreshCcw className="w-3.5 h-3.5" />
-            <span>איפוס נתוני הדגמה</span>
-          </button>
         </div>
       </div>
 
@@ -519,7 +502,7 @@ export const AdminPage: React.FC = () => {
       )}
 
       {/* Admin Tabs Bar (Horizontal scroll on mobile) */}
-      <div className="flex gap-2 border-b border-slate-200 pb-3 overflow-x-auto -mx-3.5 px-3.5 sm:mx-0 sm:px-0 no-scrollbar">
+      <div className="sticky top-14 md:top-16 z-30 bg-slate-50/95 backdrop-blur-md py-2.5 -mx-3.5 px-3.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-slate-200/80 shadow-xs flex gap-2 overflow-x-auto no-scrollbar">
         <button
           onClick={() => setActiveTab('users')}
           className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${

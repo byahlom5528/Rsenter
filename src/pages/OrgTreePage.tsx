@@ -14,7 +14,8 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  Move
+  Move,
+  Compass
 } from 'lucide-react';
 import { OrgNode } from '../types/database';
 import { db } from '../services/db';
@@ -86,10 +87,29 @@ export const OrgTreePage: React.FC = () => {
 
   // Zoom handlers
   const handleZoomIn = () => setZoom((prev) => Math.min(1.5, Number((prev + 0.15).toFixed(2))));
-  const handleZoomOut = () => setZoom((prev) => Math.max(0.5, Number((prev - 0.15).toFixed(2))));
+  const handleZoomOut = () => setZoom((prev) => Math.max(0.4, Number((prev - 0.15).toFixed(2))));
   const handleResetZoom = () => setZoom(1);
 
-  // Mouse pan handlers for smooth canvas navigation
+  // Center tree in container
+  const centerTree = () => {
+    if (chartContainerRef.current) {
+      const el = chartContainerRef.current;
+      el.scrollTo({
+        left: (el.scrollWidth - el.clientWidth) / 2,
+        top: 0,
+        behavior: 'smooth',
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!isLoading && nodes.length > 0) {
+      const timer = setTimeout(centerTree, 250);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, viewMode]);
+
+  // Mouse pan handlers for smooth canvas navigation in 2D
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!chartContainerRef.current) return;
     if ((e.target as HTMLElement).closest('button, input, select, a, .node-card')) return;
@@ -115,6 +135,38 @@ export const OrgTreePage: React.FC = () => {
 
   const handleMouseUp = () => {
     setIsDragging(false);
+  };
+
+  // Touch pan handlers for mobile 2D free panning
+  const [touchStart, setTouchStart] = useState({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
+  const [isTouchPanning, setIsTouchPanning] = useState(false);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!chartContainerRef.current || e.touches.length !== 1) return;
+    if ((e.target as HTMLElement).closest('button, input, select, a, .node-card')) return;
+    const touch = e.touches[0];
+    setIsTouchPanning(true);
+    setTouchStart({
+      x: touch.pageX - chartContainerRef.current.offsetLeft,
+      y: touch.pageY - chartContainerRef.current.offsetTop,
+      scrollLeft: chartContainerRef.current.scrollLeft,
+      scrollTop: chartContainerRef.current.scrollTop,
+    });
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isTouchPanning || !chartContainerRef.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const x = touch.pageX - chartContainerRef.current.offsetLeft;
+    const y = touch.pageY - chartContainerRef.current.offsetTop;
+    const walkX = (x - touchStart.x) * 1.2;
+    const walkY = (y - touchStart.y) * 1.2;
+    chartContainerRef.current.scrollLeft = touchStart.scrollLeft - walkX;
+    chartContainerRef.current.scrollTop = touchStart.scrollTop - walkY;
+  };
+
+  const handleTouchEnd = () => {
+    setIsTouchPanning(false);
   };
 
   // Robust Tree Builder with Cycle Detection and Orphan Node Support
@@ -386,7 +438,7 @@ export const OrgTreePage: React.FC = () => {
       </div>
 
       {/* Search & View Mode Controls */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+      <div className="sticky top-14 md:top-16 z-30 bg-slate-50/95 backdrop-blur-md py-2.5 -mx-3.5 px-3.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         
         {/* Search Bar */}
         <div className="relative flex-1 max-w-md">
@@ -457,75 +509,92 @@ export const OrgTreePage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
         {/* Org Chart / List Area */}
-        <div 
-          ref={chartContainerRef}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          className={`lg:col-span-7 bg-slate-100/80 border border-slate-200/80 rounded-2xl sm:rounded-3xl relative overflow-auto overscroll-contain min-h-[460px] max-h-[75vh] ${
-            viewMode === 'chart' ? 'cursor-grab active:cursor-grabbing' : 'p-4 sm:p-6'
-          }`}
-        >
-          {isLoading ? (
-            <div className="text-center text-slate-500 py-16">
-              <div className="w-8 h-8 border-3 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-              <p className="text-xs font-semibold">טוען מבנה ארגוני וממשקים...</p>
+        {isLoading ? (
+          <div className="lg:col-span-7 bg-slate-100/80 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-16 text-center text-slate-500 min-h-[460px] flex flex-col items-center justify-center">
+            <div className="w-8 h-8 border-3 border-brand-600 border-t-transparent rounded-full animate-spin mb-2"></div>
+            <p className="text-xs font-semibold">טוען מבנה ארגוני וממשקים...</p>
+          </div>
+        ) : viewMode === 'chart' ? (
+          <div 
+            ref={chartContainerRef}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            className="lg:col-span-7 bg-slate-100/80 border border-slate-200/80 rounded-2xl sm:rounded-3xl relative overflow-x-auto overflow-y-auto overscroll-contain custom-scrollbar h-[620px] sm:h-[700px] lg:h-[760px] cursor-grab active:cursor-grabbing touch-pan-x touch-pan-y"
+          >
+            {/* Floating Canvas Navigation Toolbar */}
+            <div className="sticky top-3 right-3 z-30 flex items-center gap-1 bg-white/95 backdrop-blur-md px-2.5 py-1.5 rounded-2xl border border-slate-200 shadow-md w-fit mr-auto mb-2">
+              <button 
+                onClick={handleZoomIn} 
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-700 transition-colors"
+                title="הגדל תצוגה (+)"
+              >
+                <ZoomIn className="w-4 h-4" />
+              </button>
+              <span className="text-[11px] font-bold text-slate-600 px-1 min-w-[36px] text-center">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button 
+                onClick={handleZoomOut} 
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-700 transition-colors"
+                title="הקטן תצוגה (−)"
+              >
+                <ZoomOut className="w-4 h-4" />
+              </button>
+              <div className="w-px h-3.5 bg-slate-200 mx-0.5"></div>
+              <button 
+                onClick={handleResetZoom} 
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
+                title="איפוס גודל (100%)"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
+              <div className="w-px h-3.5 bg-slate-200 mx-0.5"></div>
+              <button 
+                onClick={centerTree} 
+                className="flex items-center gap-1 p-1.5 rounded-lg hover:bg-brand-50 text-brand-600 hover:text-brand-800 transition-colors text-[11px] font-bold"
+                title="מרכז תרשים"
+              >
+                <Compass className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">מרכז</span>
+              </button>
             </div>
-          ) : viewMode === 'chart' ? (
-            <>
-              {/* Floating Canvas Navigation Toolbar */}
-              <div className="sticky top-3 right-3 z-30 flex items-center gap-1 bg-white/90 backdrop-blur-md px-2 py-1 rounded-xl border border-slate-200 shadow-sm w-fit mr-auto mb-2">
-                <button 
-                  onClick={handleZoomIn} 
-                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-700 transition-colors"
-                  title="הגדל תצוגה (+)"
-                >
-                  <ZoomIn className="w-4 h-4" />
-                </button>
-                <span className="text-[11px] font-bold text-slate-600 px-1 min-w-[36px] text-center">
-                  {Math.round(zoom * 100)}%
-                </span>
-                <button 
-                  onClick={handleZoomOut} 
-                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-700 transition-colors"
-                  title="הקטן תצוגה (−)"
-                >
-                  <ZoomOut className="w-4 h-4" />
-                </button>
-                <div className="w-px h-3.5 bg-slate-200 mx-0.5"></div>
-                <button 
-                  onClick={handleResetZoom} 
-                  className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors"
-                  title="איפוס גודל (100%)"
-                >
-                  <Maximize2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
 
-              {/* Mobile Drag/Pan Helper Hint */}
-              <div className="sm:hidden px-4 pb-2 text-[11px] text-slate-500 flex items-center gap-1.5 justify-center">
-                <Move className="w-3.5 h-3.5 text-slate-400" />
-                <span>ניתן לגרור לכל כיוון או להקטין/להגדיל</span>
-              </div>
+            {/* Mobile Drag/Pan Helper Hint */}
+            <div className="sm:hidden px-4 pb-2 text-[11px] text-slate-500 flex items-center gap-1.5 justify-center">
+              <Move className="w-3.5 h-3.5 text-slate-400" />
+              <span>ניתן לגרור לכל כיוון (למעלה/למטה/לצדדים) ולגלול חופשי</span>
+            </div>
 
-              {/* Scaled Tree Container with generous padding so nothing is cut off */}
+            {/* Scaled Tree Container with generous vertical & horizontal clearance */}
+            <div className="w-max min-w-full min-h-full flex flex-col items-center justify-start pt-4 pb-72 px-8 sm:px-16">
               <div 
-                className="w-max min-w-full p-6 sm:p-12 flex flex-col items-center gap-12 justify-center pb-16 transition-transform duration-150 origin-top"
-                style={{ transform: `scale(${zoom})` }}
+                className="flex flex-col items-center gap-10 sm:gap-14 transition-transform duration-150 origin-top"
+                style={{ 
+                  transform: `scale(${zoom})`,
+                  transformOrigin: 'top center',
+                }}
               >
                 {treeData.map((rootNode) => renderTreeNode(rootNode, 1))}
               </div>
-            </>
-          ) : (
-            <div className="w-full space-y-2.5">
-              <div className="bg-brand-50/70 border border-brand-200/80 p-3 rounded-xl text-xs text-brand-900 font-medium mb-3">
-                💡 תצוגת רשימה היררכית מותאמת לגלילה מהירה ונוחה במובייל. לחץ על כל תפקיד לצפייה בפירוט.
-              </div>
+            </div>
+          </div>
+        ) : (
+          /* List View Area: Pure native vertical scrolling without drag interference */
+          <div className="lg:col-span-7 bg-slate-100/80 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-4 sm:p-6 max-h-[78vh] overflow-y-auto overscroll-contain custom-scrollbar space-y-3 pb-36">
+            <div className="bg-brand-50/80 border border-brand-200/90 p-3.5 rounded-2xl text-xs text-brand-900 font-medium flex items-center gap-2">
+              <ListTree className="w-4 h-4 text-brand-600 shrink-0" />
+              <span>תצוגת רשימה היררכית מהירה ונוחה. לחץ על כל תפקיד לצפייה בפירוט הממשק.</span>
+            </div>
+            <div className="space-y-2.5 pb-24">
               {treeData.map((rootNode) => renderMobileListItem(rootNode, 0))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Desktop Role Details Card (Tailored to current role!) */}
         <div className="hidden lg:block lg:col-span-5 bg-white rounded-3xl border border-slate-200/80 p-6 shadow-md sticky top-24">

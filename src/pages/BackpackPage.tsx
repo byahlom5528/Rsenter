@@ -103,7 +103,7 @@ export const BackpackPage: React.FC = () => {
       </div>
 
       {/* Search & Category Filter Controls */}
-      <div className="flex flex-col md:flex-row gap-3 justify-between items-stretch md:items-center">
+      <div className="sticky top-14 md:top-16 z-30 bg-slate-50/95 backdrop-blur-md py-2.5 -mx-3.5 px-3.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-slate-200/80 shadow-xs flex flex-col md:flex-row gap-3 justify-between items-stretch md:items-center">
         
         {/* Search Bar */}
         <div className="relative flex-1 max-w-md">
