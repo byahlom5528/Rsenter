@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   ShieldAlert, 
   Users, 
@@ -47,6 +47,9 @@ export const AdminPage: React.FC = () => {
   // 2. Tasks & Roles CMS State
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<string>('');
+  const selectedRoleIdRef = useRef<string>('');
+  selectedRoleIdRef.current = selectedRoleId;
+
   const [currentRoleTasks, setCurrentRoleTasks] = useState<Task[]>([]);
   const [editingTask, setEditingTask] = useState<Partial<Task> | null>(null);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
@@ -89,7 +92,8 @@ export const AdminPage: React.FC = () => {
       setBackpackResources(resources);
       setOrgNodes(nodes);
 
-      const targetRole = selectedRoleId || (allRoles[0] ? allRoles[0].id : '');
+      const targetRole = selectedRoleIdRef.current || (allRoles[0] ? allRoles[0].id : '');
+      selectedRoleIdRef.current = targetRole;
       setSelectedRoleId(targetRole);
       if (targetRole) {
         const tasks = await db.getTasksByRole(targetRole);
@@ -119,6 +123,10 @@ export const AdminPage: React.FC = () => {
         setIsRoleModalOpen(false);
         setIsResourceModalOpen(false);
         setIsNodeModalOpen(false);
+        setEditingTask(null);
+        setEditingRole(null);
+        setEditingResource(null);
+        setEditingNode(null);
         setSelectedUserOverview(null);
       }
     };
@@ -128,6 +136,7 @@ export const AdminPage: React.FC = () => {
 
   // Update role tasks when selected role changes
   const handleRoleChange = async (roleId: string) => {
+    selectedRoleIdRef.current = roleId;
     setSelectedRoleId(roleId);
     const tasks = await db.getTasksByRole(roleId);
     setCurrentRoleTasks(tasks);
