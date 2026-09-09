@@ -21,46 +21,127 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const CURRENT_USER_KEY = 'onboarding_current_user_id';
+// Persistent LocalStorage keys for session retention across page reloads
+const CURRENT_USER_ID_KEY = 'onboarding_current_user_id';
+const CURRENT_USER_DATA_KEY = 'onboarding_current_user_data';
+const CURRENT_ROLE_DATA_KEY = 'onboarding_current_role_data';
+const CURRENT_PERSONAL_ID_KEY = 'onboarding_current_personal_id';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [currentRole, setCurrentRole] = useState<Role | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+  // Synchronously initialize currentUser and currentRole from localStorage
+  // to avoid session loss or redirect flash on page refresh
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    try {
+      const savedData = localStorage.getItem(CURRENT_USER_DATA_KEY);
+      if (savedData) {
+        return JSON.parse(savedData) as User;
+      }
+      return null;
+    } catch (e) {
+      console.error('Failed to parse cached user data from localStorage', e);
+      return null;
+    }
+  });
 
-  const fetchRoleForUser = async (user: User) => {
+  const [currentRole, setCurrentRole] = useState<Role | null>(() => {
+    try {
+      const savedRole = localStorage.getItem(CURRENT_ROLE_DATA_KEY);
+      if (savedRole) {
+        return JSON.parse(savedRole) as Role;
+      }
+      return null;
+    } catch (e) {
+      console.error('Failed to parse cached role data from localStorage', e);
+      return null;
+    }
+  });
+
+  // Only show initial full-page loader if there is an ID stored but data hasn't loaded yet
+  const [isLoading, setIsLoading] = useState<boolean>(() => {
+    const hasCachedUser = Boolean(localStorage.getItem(CURRENT_USER_DATA_KEY));
+    const hasUserId = Boolean(localStorage.getItem(CURRENT_USER_ID_KEY));
+    return !hasCachedUser && hasUserId;
+  });
+
+  const persistSession = (user: User | null, role: Role | null) => {
+    if (user) {
+      localStorage.setItem(CURRENT_USER_ID_KEY, user.id);
+      localStorage.setItem(CURRENT_USER_DATA_KEY, JSON.stringify(user));
+      localStorage.setItem(CURRENT_PERSONAL_ID_KEY, user.personal_id);
+    } else {
+      localStorage.removeItem(CURRENT_USER_ID_KEY);
+      localStorage.removeItem(CURRENT_USER_DATA_KEY);
+      localStorage.removeItem(CURRENT_PERSONAL_ID_KEY);
+    }
+
+    if (role) {
+      localStorage.setItem(CURRENT_ROLE_DATA_KEY, JSON.stringify(role));
+    } else {
+      localStorage.removeItem(CURRENT_ROLE_DATA_KEY);
+    }
+  };
+
+  const fetchRoleForUser = async (user: User): Promise<Role | null> => {
     if (user.role_id) {
       const role = await db.getRoleById(user.role_id);
       setCurrentRole(role);
+      if (role) {
+        localStorage.setItem(CURRENT_ROLE_DATA_KEY, JSON.stringify(role));
+      } else {
+        localStorage.removeItem(CURRENT_ROLE_DATA_KEY);
+      }
+      return role;
     } else {
       setCurrentRole(null);
+      localStorage.removeItem(CURRENT_ROLE_DATA_KEY);
+      return null;
     }
   };
 
   const refreshUserData = async () => {
     if (!currentUser) return;
-    const freshUser = await db.getUserById(currentUser.id);
-    if (freshUser) {
-      setCurrentUser(freshUser);
-      await fetchRoleForUser(freshUser);
+    try {
+      const freshUser = 
+        (await db.getUserById(currentUser.id)) || 
+        (await db.getUserByPersonalId(currentUser.personal_id));
+      
+      if (freshUser) {
+        setCurrentUser(freshUser);
+        const role = await fetchRoleForUser(freshUser);
+        persistSession(freshUser, role);
+      }
+    } catch (err) {
+      console.error('Error refreshing user data:', err);
     }
   };
 
+  // Verify and refresh session on mount
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const savedUserId = localStorage.getItem(CURRENT_USER_KEY);
-        if (savedUserId) {
-          const user = await db.getUserById(savedUserId);
+        const savedUserId = localStorage.getItem(CURRENT_USER_ID_KEY);
+        const savedPersonalId = localStorage.getItem(CURRENT_PERSONAL_ID_KEY);
+
+        if (savedUserId || savedPersonalId) {
+          let user: User | null = null;
+          if (savedUserId) {
+            user = await db.getUserById(savedUserId);
+          }
+          if (!user && savedPersonalId) {
+            user = await db.getUserByPersonalId(savedPersonalId);
+          }
+
           if (user) {
             setCurrentUser(user);
-            await fetchRoleForUser(user);
+            const role = await fetchRoleForUser(user);
+            persistSession(user, role);
           } else {
-            localStorage.removeItem(CURRENT_USER_KEY);
+            // Keep existing cached user if DB is still synchronizing;
+            // DO NOT clear localStorage unless user explicitly logs out!
           }
         }
       } catch (err) {
-        console.error('Error initializing auth:', err);
+        console.error('Error verifying user auth session:', err);
       } finally {
         setIsLoading(false);
       }
@@ -86,7 +167,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setCurrentUser(adminUser);
       setCurrentRole(null);
-      localStorage.setItem(CURRENT_USER_KEY, adminUser.id);
+      persistSession(adminUser, null);
       return { success: true, isAdmin: true };
     }
 
@@ -94,8 +175,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const existingUser = await db.getUserByPersonalId(personalId);
     if (existingUser) {
       setCurrentUser(existingUser);
-      await fetchRoleForUser(existingUser);
-      localStorage.setItem(CURRENT_USER_KEY, existingUser.id);
+      const role = await fetchRoleForUser(existingUser);
+      persistSession(existingUser, role);
       return { success: true, isAdmin: existingUser.is_admin, isNewUser: false };
     }
 
@@ -112,15 +193,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }) => {
     const newUser = await db.createUser(userData);
     setCurrentUser(newUser);
-    await fetchRoleForUser(newUser);
-    localStorage.setItem(CURRENT_USER_KEY, newUser.id);
+    const role = await fetchRoleForUser(newUser);
+    persistSession(newUser, role);
     return newUser;
   };
 
   const logout = () => {
     setCurrentUser(null);
     setCurrentRole(null);
-    localStorage.removeItem(CURRENT_USER_KEY);
+    persistSession(null, null);
   };
 
   const isAdmin = Boolean(currentUser?.is_admin || currentUser?.personal_id === '0000000');

@@ -1,6 +1,13 @@
 // Database Type Definitions for מערכת כניסה לתפקיד
 
-export type TaskType = 'simple_check' | 'media_question' | 'text_question';
+export type TaskType = 'simple_check' | 'media_question' | 'text_question' | 'binary_choice';
+
+export interface BinaryQuestionItem {
+  id: string;
+  question: string;
+  option1: string; // e.g. "כן"
+  option2: string; // e.g. "לא"
+}
 
 export interface Role {
   id: string;

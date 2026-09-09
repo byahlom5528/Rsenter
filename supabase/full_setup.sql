@@ -42,7 +42,7 @@ CREATE TABLE tasks (
     step_order INTEGER NOT NULL,
     title VARCHAR(255) NOT NULL,
     description TEXT NOT NULL,
-    type VARCHAR(50) NOT NULL CHECK (type IN ('simple_check', 'media_question', 'text_question')),
+    type VARCHAR(50) NOT NULL CHECK (type IN ('simple_check', 'media_question', 'text_question', 'binary_choice')),
     media_url TEXT,
     question_prompt TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,

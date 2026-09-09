@@ -25,6 +25,11 @@ import { useAuth } from '../context/AuthContext';
 import { db } from '../services/db';
 import { TaskWithProgress } from '../types/database';
 import { getMediaInfo, ensureValidUrl } from '../utils/mediaUtils';
+import { 
+  parseBinaryQuestions, 
+  parseBinaryAnswers, 
+  serializeBinaryAnswers 
+} from '../utils/binaryQuestions';
 
 export const DashboardPage: React.FC = () => {
   const { currentUser, currentRole, isAdmin, refreshUserData } = useAuth();
@@ -35,6 +40,7 @@ export const DashboardPage: React.FC = () => {
   
   // State for task answer submissions
   const [answersState, setAnswersState] = useState<Record<string, string>>({});
+  const [binaryAnswersState, setBinaryAnswersState] = useState<Record<string, Record<string, string>>>({});
   const [submittingTaskId, setSubmittingTaskId] = useState<string | null>(null);
   const [errorMessages, setErrorMessages] = useState<Record<string, string>>({});
   const [editingAnswerTaskId, setEditingAnswerTaskId] = useState<string | null>(null);
@@ -56,12 +62,18 @@ export const DashboardPage: React.FC = () => {
 
       // Pre-fill answer state from existing progress
       const initialAnswers: Record<string, string> = {};
+      const initialBinaryAnswers: Record<string, Record<string, string>> = {};
       userProgress.forEach((p) => {
         if (p.answer_text) {
           initialAnswers[p.task_id] = p.answer_text;
+          const parsed = parseBinaryAnswers(p.answer_text);
+          if (Object.keys(parsed).length > 0) {
+            initialBinaryAnswers[p.task_id] = parsed;
+          }
         }
       });
       setAnswersState((prev) => ({ ...initialAnswers, ...prev }));
+      setBinaryAnswersState((prev) => ({ ...initialBinaryAnswers, ...prev }));
 
       // Build sequential locking state
       let previousTaskCompleted = true; // Task 1 is always unlocked
@@ -131,13 +143,62 @@ export const DashboardPage: React.FC = () => {
     });
   };
 
+  const handleSelectBinaryOption = (taskId: string, questionId: string, optionValue: string) => {
+    setBinaryAnswersState((prev) => ({
+      ...prev,
+      [taskId]: {
+        ...(prev[taskId] || {}),
+        [questionId]: optionValue,
+      },
+    }));
+    if (errorMessages[taskId]) {
+      setErrorMessages((prev) => ({ ...prev, [taskId]: '' }));
+    }
+  };
+
   const handleCompleteTask = async (task: TaskWithProgress) => {
     if (!currentUser) return;
+
+    if (task.type === 'binary_choice') {
+      const bqList = parseBinaryQuestions(task.question_prompt);
+      const currentTaskAnswers = binaryAnswersState[task.id] || {};
+      const answeredCount = bqList.filter((q) => Boolean(currentTaskAnswers[q.id])).length;
+      if (answeredCount < bqList.length) {
+        setErrorMessages({
+          ...errorMessages,
+          [task.id]: bqList.length === 1
+            ? 'יש לבחור באחת מבין שתי האפשרויות להשלמת המשימה.'
+            : `יש לבחור אפשרות בכל הסעיפים (נבחרו ${answeredCount} מתוך ${bqList.length}).`,
+        });
+        return;
+      }
+
+      setSubmittingTaskId(task.id);
+      setErrorMessages({ ...errorMessages, [task.id]: '' });
+
+      try {
+        await db.completeTask(currentUser.id, task.id, serializeBinaryAnswers(currentTaskAnswers));
+        triggerConfetti();
+        setEditingAnswerTaskId(null);
+        await loadDashboardData();
+        await refreshUserData();
+      } catch (err) {
+        console.error('Failed to complete binary choice task', err);
+        setErrorMessages({
+          ...errorMessages,
+          [task.id]: 'שגיאה בשמירת סטטוס המשימה. אנא נסה שוב.',
+        });
+      } finally {
+        setSubmittingTaskId(null);
+      }
+      return;
+    }
     
     const currentAnswer = answersState[task.id] || '';
+    const hasQuestion = task.type === 'text_question' || (task.type === 'media_question' && Boolean(task.question_prompt?.trim()));
 
     // If task requires answer, validate it with minimum 4 characters
-    if (task.type === 'media_question' || task.type === 'text_question') {
+    if (hasQuestion) {
       if (!currentAnswer.trim() || currentAnswer.trim().length < 4) {
         setErrorMessages({
           ...errorMessages,
@@ -151,7 +212,7 @@ export const DashboardPage: React.FC = () => {
     setErrorMessages({ ...errorMessages, [task.id]: '' });
 
     try {
-      await db.completeTask(currentUser.id, task.id, currentAnswer.trim() || undefined);
+      await db.completeTask(currentUser.id, task.id, hasQuestion ? (currentAnswer.trim() || undefined) : undefined);
       triggerConfetti();
       setEditingAnswerTaskId(null);
       await loadDashboardData();
@@ -394,6 +455,7 @@ export const DashboardPage: React.FC = () => {
             const error = errorMessages[task.id];
             const isEditingAnswer = editingAnswerTaskId === task.id;
             const mediaInfo = getMediaInfo(task.media_url);
+            const hasQuestion = task.type === 'text_question' || (task.type === 'media_question' && Boolean(task.question_prompt?.trim()));
 
             return (
               <div
@@ -443,13 +505,19 @@ export const DashboardPage: React.FC = () => {
                           {task.type === 'media_question' && (
                             <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md border border-blue-200 flex items-center gap-1">
                               <Video className="w-3 h-3 text-blue-600" />
-                              <span>מדיה + שאלה</span>
+                              <span>{hasQuestion ? 'מדיה + שאלה' : 'צפייה במדיה'}</span>
                             </span>
                           )}
                           {task.type === 'text_question' && (
                             <span className="text-[10px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md border border-purple-200 flex items-center gap-1">
                               <MessageSquare className="w-3 h-3 text-purple-600" />
                               <span>שאלת הבנה</span>
+                            </span>
+                          )}
+                          {task.type === 'binary_choice' && (
+                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-slate-500" />
+                              <span>בחירה בין 2 אפשרויות</span>
                             </span>
                           )}
 
@@ -567,8 +635,121 @@ export const DashboardPage: React.FC = () => {
                     </div>
                   )}
 
-                  {/* QUESTION PROMPT & INPUT (If media_question or text_question) */}
-                  {(task.type === 'media_question' || task.type === 'text_question') && (
+                  {/* BINARY CHOICE QUESTIONS (If type === 'binary_choice') */}
+                  {task.type === 'binary_choice' && (
+                    <div className="mb-4 space-y-3">
+                      <div className="flex items-center justify-between text-xs text-slate-700 font-bold mb-1">
+                        <div className="flex items-center gap-1.5">
+                          <HelpCircle className="w-4 h-4 text-slate-600" />
+                          <span>בחר באפשרות המתאימה:</span>
+                        </div>
+                        {isCompleted && !isEditingAnswer && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingAnswerTaskId(task.id);
+                              const parsed = parseBinaryAnswers(task.progress?.answer_text);
+                              setBinaryAnswersState((prev) => ({ ...prev, [task.id]: parsed }));
+                            }}
+                            className="text-[11px] text-slate-700 hover:text-slate-900 font-bold flex items-center gap-1 hover:underline"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                            <span>ערוך בחירות</span>
+                          </button>
+                        )}
+                        {isCompleted && isEditingAnswer && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingAnswerTaskId(null)}
+                            className="text-[11px] text-slate-500 hover:text-slate-700 flex items-center gap-0.5"
+                          >
+                            <X className="w-3 h-3" />
+                            <span>ביטול עריכה</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="space-y-2.5">
+                        {parseBinaryQuestions(task.question_prompt).map((bq, qIndex) => {
+                          const currentAnswers = binaryAnswersState[task.id] || {};
+                          const selectedOption = currentAnswers[bq.id];
+                          const isInteractive = isActive || (isCompleted && isEditingAnswer);
+                          const totalQuestions = parseBinaryQuestions(task.question_prompt).length;
+
+                          return (
+                            <div
+                              key={bq.id || qIndex}
+                              className={`p-3 sm:p-3.5 rounded-xl border transition-all ${
+                                selectedOption
+                                  ? 'bg-slate-50/70 border-slate-300 shadow-2xs'
+                                  : 'bg-white border-slate-200'
+                              }`}
+                            >
+                              {/* Display question/title only if provided; or index if multiple questions without title */}
+                              {bq.question ? (
+                                <div className="flex items-start gap-2 mb-2.5">
+                                  {totalQuestions > 1 && (
+                                    <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 text-xs font-extrabold flex items-center justify-center shrink-0 mt-0.5">
+                                      {qIndex + 1}
+                                    </span>
+                                  )}
+                                  <span className="text-xs sm:text-sm font-bold text-slate-900 leading-snug">
+                                    {bq.question}
+                                  </span>
+                                </div>
+                              ) : totalQuestions > 1 ? (
+                                <div className="flex items-start gap-2 mb-2">
+                                  <span className="text-xs font-bold text-slate-500">
+                                    סעיף {qIndex + 1}:
+                                  </span>
+                                </div>
+                              ) : null}
+
+                              {/* Two Choice Option Buttons (Neutral styling - no colors) */}
+                              <div className="grid grid-cols-2 gap-2.5">
+                                {/* Option 1 */}
+                                <button
+                                  type="button"
+                                  disabled={!isInteractive}
+                                  onClick={() => handleSelectBinaryOption(task.id, bq.id, bq.option1)}
+                                  className={`px-3 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border transition-all ${
+                                    selectedOption === bq.option1
+                                      ? 'bg-slate-900 border-slate-900 text-white shadow-sm scale-[1.01]'
+                                      : isInteractive
+                                      ? 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+                                      : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                                  }`}
+                                >
+                                  {selectedOption === bq.option1 && <Check className="w-4 h-4 stroke-[3]" />}
+                                  <span>{bq.option1}</span>
+                                </button>
+
+                                {/* Option 2 */}
+                                <button
+                                  type="button"
+                                  disabled={!isInteractive}
+                                  onClick={() => handleSelectBinaryOption(task.id, bq.id, bq.option2)}
+                                  className={`px-3 py-2.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 border transition-all ${
+                                    selectedOption === bq.option2
+                                      ? 'bg-slate-900 border-slate-900 text-white shadow-sm scale-[1.01]'
+                                      : isInteractive
+                                      ? 'bg-white border-slate-300 text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+                                      : 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                                  }`}
+                                >
+                                  {selectedOption === bq.option2 && <Check className="w-4 h-4 stroke-[3]" />}
+                                  <span>{bq.option2}</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* QUESTION PROMPT & INPUT (Only if text_question or media_question with a defined question) */}
+                  {hasQuestion && (
                     <div className="mb-3.5">
                       {task.question_prompt && (
                         <div className={`p-3 rounded-xl mb-2.5 flex items-start gap-2 ${
@@ -667,10 +848,12 @@ export const DashboardPage: React.FC = () => {
                           <>
                             <span>
                               {isCompleted 
-                                ? 'שמור שינויים בתשובה' 
-                                : task.type === 'simple_check' 
-                                ? 'סמן כמשימה שהושלמה' 
-                                : 'הגש תשובה והשלם שלב'}
+                                ? (task.type === 'binary_choice' ? 'שמור שינויים בבחירות' : 'שמור שינויים בתשובה')
+                                : task.type === 'binary_choice'
+                                ? 'אשר בחירה והשלם שלב'
+                                : hasQuestion 
+                                ? 'הגש תשובה והשלם שלב' 
+                                : 'סמן כמשימה שהושלמה'}
                             </span>
                             <CheckCircle2 className="w-4 h-4" />
                           </>

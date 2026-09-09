@@ -15,8 +15,51 @@ export const EntryPage: React.FC = () => {
   const [personalId, setPersonalId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { loginWithPersonalId } = useAuth();
+  const { currentUser, isAdmin, isLoading, logout, loginWithPersonalId } = useAuth();
   const navigate = useNavigate();
+
+  // If user is already logged in (remembered by browser), redirect automatically
+  React.useEffect(() => {
+    if (!isLoading && currentUser) {
+      if (isAdmin && currentUser.personal_id === '0000000') {
+        navigate('/admin', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
+      }
+    }
+  }, [currentUser, isAdmin, isLoading, navigate]);
+
+  if (currentUser) {
+    return (
+      <div className="min-h-[78vh] flex items-center justify-center py-6 px-4">
+        <div className="w-full max-w-md bg-white/95 backdrop-blur-xl rounded-2xl shadow-xl p-6 sm:p-8 border border-slate-200 text-center">
+          <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 mb-1">
+            שלום, {currentUser.full_name}!
+          </h2>
+          <p className="text-xs text-slate-500 mb-6">
+            המערכת זיהתה אותך. מעביר אותך לדשבורד...
+          </p>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => navigate(isAdmin && currentUser.personal_id === '0000000' ? '/admin' : '/dashboard')}
+              className="w-full py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-brand-500/20"
+            >
+              המשך לדשבורד
+            </button>
+            <button
+              onClick={() => logout()}
+              className="w-full py-2.5 text-xs text-red-600 hover:bg-red-50 rounded-xl font-medium transition-colors"
+            >
+              התנתק והחלף משתמש
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '').slice(0, 7);

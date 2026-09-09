@@ -251,7 +251,26 @@ class DBService {
   }
 
   async getRoleById(id: string): Promise<Role | null> {
-    return this.roles.find((r) => r.id === id) || null;
+    const local = this.roles.find((r) => r.id === id);
+    if (local) return local;
+
+    if (isSupabaseConfigured && supabase && isValidUUID(id)) {
+      try {
+        const { data, error } = await supabase.from('roles').select('*').eq('id', id).single();
+        if (!error && data) {
+          const role = data as Role;
+          if (!this.roles.some((r) => r.id === role.id)) {
+            this.roles.push(role);
+            this.saveAll();
+          }
+          return role;
+        }
+      } catch (e) {
+        console.warn('Supabase getRoleById fallback notice:', e);
+      }
+    }
+
+    return null;
   }
 
   async createRole(roleData: Omit<Role, 'id' | 'created_at'>): Promise<Role> {
@@ -345,11 +364,49 @@ class DBService {
 
   // ==================== USERS & AUTH ====================
   async getUserByPersonalId(personalId: string): Promise<User | null> {
-    return this.users.find((u) => u.personal_id === personalId) || null;
+    const local = this.users.find((u) => u.personal_id === personalId);
+    if (local) return local;
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase.from('users').select('*').eq('personal_id', personalId).single();
+        if (!error && data) {
+          const user = data as User;
+          if (!this.users.some((u) => u.id === user.id)) {
+            this.users.push(user);
+            this.saveAll();
+          }
+          return user;
+        }
+      } catch (e) {
+        console.warn('Supabase getUserByPersonalId fallback notice:', e);
+      }
+    }
+
+    return null;
   }
 
   async getUserById(id: string): Promise<User | null> {
-    return this.users.find((u) => u.id === id) || null;
+    const local = this.users.find((u) => u.id === id);
+    if (local) return local;
+
+    if (isSupabaseConfigured && supabase && isValidUUID(id)) {
+      try {
+        const { data, error } = await supabase.from('users').select('*').eq('id', id).single();
+        if (!error && data) {
+          const user = data as User;
+          if (!this.users.some((u) => u.id === user.id)) {
+            this.users.push(user);
+            this.saveAll();
+          }
+          return user;
+        }
+      } catch (e) {
+        console.warn('Supabase getUserById fallback notice:', e);
+      }
+    }
+
+    return null;
   }
 
   async getAllUsers(): Promise<User[]> {

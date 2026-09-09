@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- 3. TASKS TABLE (Sequential Onboarding Tasks)
-CREATE TYPE task_type_enum AS ENUM ('simple_check', 'media_question', 'text_question');
+CREATE TYPE task_type_enum AS ENUM ('simple_check', 'media_question', 'text_question', 'binary_choice');
 
 CREATE TABLE IF NOT EXISTS tasks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     step_order INTEGER NOT NULL,
     title VARCHAR(255) NOT NULL,
     description TEXT NOT NULL,
-    type VARCHAR(50) NOT NULL CHECK (type IN ('simple_check', 'media_question', 'text_question')),
+    type VARCHAR(50) NOT NULL CHECK (type IN ('simple_check', 'media_question', 'text_question', 'binary_choice')),
     media_url TEXT,
     question_prompt TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,

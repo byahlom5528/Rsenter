@@ -29,9 +29,15 @@ import {
   Task, 
   BackpackResource, 
   OrgNode,
-  TaskType
+  TaskType,
+  BinaryQuestionItem
 } from '../types/database';
 import { ensureValidUrl } from '../utils/mediaUtils';
+import { 
+  parseBinaryQuestions, 
+  serializeBinaryQuestions, 
+  parseBinaryAnswers 
+} from '../utils/binaryQuestions';
 
 export const AdminPage: React.FC = () => {
   useAuth();
@@ -52,6 +58,9 @@ export const AdminPage: React.FC = () => {
 
   const [currentRoleTasks, setCurrentRoleTasks] = useState<Task[]>([]);
   const [editingTask, setEditingTask] = useState<Partial<Task> | null>(null);
+  const [binaryQuestions, setBinaryQuestions] = useState<BinaryQuestionItem[]>([
+    { id: 'bq_1', question: '', option1: 'כן', option2: 'לא' }
+  ]);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [editingRole, setEditingRole] = useState<Role | null>(null);
@@ -208,11 +217,18 @@ export const AdminPage: React.FC = () => {
       media_url: '',
       question_prompt: '',
     });
+    setBinaryQuestions([{ id: 'bq_1', question: '', option1: '', option2: '' }]);
     setIsTaskModalOpen(true);
   };
 
   const handleEditTask = (task: Task) => {
     setEditingTask({ ...task });
+    if (task.type === 'binary_choice') {
+      const parsed = parseBinaryQuestions(task.question_prompt);
+      setBinaryQuestions(parsed.length > 0 ? parsed : [{ id: 'bq_1', question: '', option1: '', option2: '' }]);
+    } else {
+      setBinaryQuestions([{ id: 'bq_1', question: '', option1: '', option2: '' }]);
+    }
     setIsTaskModalOpen(true);
   };
 
@@ -220,12 +236,30 @@ export const AdminPage: React.FC = () => {
     e.preventDefault();
     if (!editingTask || !editingTask.title || !editingTask.role_id) return;
 
+    if (editingTask.type === 'binary_choice') {
+      const validQuestions = binaryQuestions.filter((q) => q.option1.trim().length > 0 && q.option2.trim().length > 0);
+      if (validQuestions.length === 0) {
+        showStatus('יש להגדיר לפחות זוג אפשרויות בחירה אחד עם שתי אופציות', 'error');
+        return;
+      }
+    }
+
     try {
+      const taskToSave = {
+        ...editingTask,
+        media_url: editingTask.type === 'media_question' ? (editingTask.media_url?.trim() || null) : null,
+        question_prompt: editingTask.type === 'binary_choice'
+          ? serializeBinaryQuestions(binaryQuestions)
+          : (editingTask.type === 'text_question' || editingTask.type === 'media_question')
+          ? (editingTask.question_prompt?.trim() || null)
+          : null,
+      };
+
       if (editingTask.id) {
-        await db.updateTask(editingTask.id, editingTask);
+        await db.updateTask(editingTask.id, taskToSave);
         showStatus('המשימה עודכנה בהצלחה');
       } else {
-        await db.createTask(editingTask as Omit<Task, 'id' | 'created_at'>);
+        await db.createTask(taskToSave as Omit<Task, 'id' | 'created_at'>);
         showStatus('משימה חדשה נוצרה בהצלחה');
       }
       setIsTaskModalOpen(false);
@@ -874,8 +908,43 @@ export const AdminPage: React.FC = () => {
                           {task.description}
                         </p>
 
+                        {task.type === 'binary_choice' ? (
+                          <div className="mt-2 space-y-2 p-2.5 bg-slate-100/70 rounded-xl border border-slate-200">
+                            <span className="text-[11px] font-bold text-slate-700 block mb-1">
+                              📋 אפשרויות בחירה ({parseBinaryQuestions(task.question_prompt).length}):
+                            </span>
+                            {parseBinaryQuestions(task.question_prompt).map((bq, i) => {
+                              const chosen = parseBinaryAnswers(progress?.answer_text)[bq.id];
+                              return (
+                                <div key={bq.id || i} className="p-2 bg-white rounded-lg border border-slate-200/80 text-xs">
+                                  <div className="font-semibold text-slate-900 mb-1">
+                                    {bq.question ? `${i + 1}. ${bq.question}` : `בחירה #${i + 1}: [${bq.option1} / ${bq.option2}]`}
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] text-slate-500 font-bold">תשובת החניך:</span>
+                                    {chosen ? (
+                                      <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-800 border border-slate-300">
+                                        ✓ {chosen}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[11px] text-slate-400 italic">טרם נענה</span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          task.question_prompt && (
+                            <div className="mb-2 p-2 rounded-lg bg-blue-50/70 border border-blue-100 text-xs text-blue-900">
+                              <span className="font-bold block mb-0.5">❓ שאלת אימות:</span>
+                              <span>{task.question_prompt}</span>
+                            </div>
+                          )
+                        )}
+
                         {/* Submitted Answer Display */}
-                        {isCompleted && progress?.answer_text && (
+                        {task.type !== 'binary_choice' && isCompleted && progress?.answer_text && (
                           <div className="mt-3 p-3 bg-white rounded-xl border border-emerald-200 text-xs">
                             <span className="font-bold text-emerald-800 block mb-1">
                               💬 תשובת החניך:
@@ -1046,16 +1115,35 @@ export const AdminPage: React.FC = () => {
                       <div className="flex items-center gap-2 mb-1">
                         <h4 className="font-bold text-slate-900 text-base">{task.title}</h4>
                         <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                          {task.type === 'simple_check' ? 'סימון פשוט' : task.type === 'media_question' ? 'מדיה + שאלה' : 'שאלת הבנה'}
+                          {task.type === 'simple_check'
+                            ? 'סימון פשוט'
+                            : task.type === 'media_question'
+                            ? (task.question_prompt ? 'מדיה + שאלה' : 'צפייה במדיה')
+                            : task.type === 'binary_choice'
+                            ? (parseBinaryQuestions(task.question_prompt).length === 1 ? 'בחירה בין 2 אפשרויות' : `בחירה (${parseBinaryQuestions(task.question_prompt).length} סעיפים)`)
+                            : 'שאלת הבנה'}
                         </span>
                       </div>
                       <p className="text-xs text-slate-600 leading-relaxed mb-1 line-clamp-2">
                         {task.description}
                       </p>
-                      {task.question_prompt && (
-                        <p className="text-xs text-brand-700 font-medium">
-                          ❓ שאלת אימות: {task.question_prompt}
-                        </p>
+                      {task.type === 'binary_choice' ? (
+                        <div className="mt-1 space-y-1">
+                          {parseBinaryQuestions(task.question_prompt).map((bq, i) => (
+                            <div key={bq.id || i} className="text-xs text-slate-800 flex items-center gap-1.5 font-medium">
+                              <span>🔘 {bq.question ? `${i + 1}. ${bq.question}` : `בחירה #${i + 1}`}</span>
+                              <span className="text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
+                                [{bq.option1} / {bq.option2}]
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        task.question_prompt && (
+                          <p className="text-xs text-brand-700 font-medium">
+                            ❓ שאלת אימות: {task.question_prompt}
+                          </p>
+                        )
                       )}
                     </div>
                   </div>
@@ -1184,12 +1272,19 @@ export const AdminPage: React.FC = () => {
                     <label className="block text-xs font-bold text-slate-700 mb-1">סוג המשימה</label>
                     <select
                       value={editingTask.type || 'simple_check'}
-                      onChange={(e) => setEditingTask({ ...editingTask, type: e.target.value as TaskType })}
+                      onChange={(e) => {
+                        const newType = e.target.value as TaskType;
+                        setEditingTask({ ...editingTask, type: newType });
+                        if (newType === 'binary_choice' && binaryQuestions.length === 0) {
+                          setBinaryQuestions([{ id: 'bq_1', question: '', option1: '', option2: '' }]);
+                        }
+                      }}
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white outline-none focus:border-brand-500"
                     >
-                      <option value="simple_check">סימון פשוט</option>
-                      <option value="media_question">צפייה במדיה ומענה על שאלה</option>
-                      <option value="text_question">שאלת הבנה פתוחה</option>
+                      <option value="simple_check">סימון פשוט (קריאה ואישור)</option>
+                      <option value="media_question">צפייה במדיה (שאלה אופציונלית)</option>
+                      <option value="text_question">שאלת הבנה פתוחה (חובה מענה)</option>
+                      <option value="binary_choice">בחירה בין 2 אפשרויות</option>
                     </select>
                   </div>
 
@@ -1204,6 +1299,109 @@ export const AdminPage: React.FC = () => {
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
                     ></textarea>
                   </div>
+
+                  {/* SUB-QUESTIONS BUILDER FOR BINARY_CHOICE */}
+                  {editingTask.type === 'binary_choice' && (
+                    <div className="space-y-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-800">
+                            אפשרויות בחירה (2 אופציות לבחירה)
+                          </label>
+                          <p className="text-[11px] text-slate-500">
+                            ניתן להזין שאלה/כותרת (לא חובה) ושתי אופציות לבחירה.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBinaryQuestions([
+                              ...binaryQuestions,
+                              { id: `bq_${Date.now()}`, question: '', option1: '', option2: '' }
+                            ]);
+                          }}
+                          className="px-2.5 py-1 text-xs bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-lg flex items-center gap-1 transition-colors shadow-xs"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>הוסף אפשרות בחירה</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                        {binaryQuestions.map((bq, qIndex) => (
+                          <div key={bq.id || qIndex} className="p-3 bg-white rounded-xl border border-slate-200 shadow-xs relative">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-bold text-slate-700">
+                                {binaryQuestions.length > 1 ? `אפשרות בחירה #${qIndex + 1}` : 'הגדרת האפשרויות'}
+                              </span>
+                              {binaryQuestions.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setBinaryQuestions(binaryQuestions.filter((_, idx) => idx !== qIndex));
+                                  }}
+                                  className="text-slate-400 hover:text-red-500 p-1 rounded-md transition-colors"
+                                  title="מחק סעיף זה"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="mb-2">
+                              <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                                כותרת או שאלה (אופציונלי - ניתן להשאיר ריק):
+                              </label>
+                              <input
+                                type="text"
+                                value={bq.question}
+                                onChange={(e) => {
+                                  const updated = [...binaryQuestions];
+                                  updated[qIndex].question = e.target.value;
+                                  setBinaryQuestions(updated);
+                                }}
+                                placeholder="לדוגמה: האם ביצעת גיבוי? (או השאר ריק)"
+                                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 outline-none focus:border-slate-500 font-medium"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 mb-0.5">אפשרות 1</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={bq.option1}
+                                  onChange={(e) => {
+                                    const updated = [...binaryQuestions];
+                                    updated[qIndex].option1 = e.target.value;
+                                    setBinaryQuestions(updated);
+                                  }}
+                                  placeholder="אפשרות א'"
+                                  className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-300 outline-none focus:border-slate-500 text-center font-semibold text-slate-800 bg-slate-50 focus:bg-white"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-600 mb-0.5">אפשרות 2</label>
+                                <input
+                                  type="text"
+                                  required
+                                  value={bq.option2}
+                                  onChange={(e) => {
+                                    const updated = [...binaryQuestions];
+                                    updated[qIndex].option2 = e.target.value;
+                                    setBinaryQuestions(updated);
+                                  }}
+                                  placeholder="אפשרות ב'"
+                                  className="w-full px-2 py-1.5 text-xs rounded-lg border border-slate-300 outline-none focus:border-slate-500 text-center font-semibold text-slate-800 bg-slate-50 focus:bg-white"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {editingTask.type === 'media_question' && (
                     <div>
@@ -1220,15 +1418,31 @@ export const AdminPage: React.FC = () => {
 
                   {(editingTask.type === 'media_question' || editingTask.type === 'text_question') && (
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">שאלת אימות והבנה לחניך</label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-bold text-slate-700">
+                          {editingTask.type === 'text_question' ? 'שאלת הבנה לחניך' : 'שאלת אימות והבנה לחניך (אופציונלי)'}
+                        </label>
+                        {editingTask.type === 'media_question' && (
+                          <span className="text-[11px] text-slate-400 font-normal">לא חובה</span>
+                        )}
+                      </div>
                       <input
                         type="text"
-                        required
+                        required={editingTask.type === 'text_question'}
                         value={editingTask.question_prompt || ''}
                         onChange={(e) => setEditingTask({ ...editingTask, question_prompt: e.target.value })}
-                        placeholder="לדוגמה: מהם שלושת שלבי הדיווח הנדרשים בנוהל?"
+                        placeholder={
+                          editingTask.type === 'text_question'
+                            ? 'לדוגמה: מהם שלושת שלבי הדיווח הנדרשים בנוהל?'
+                            : 'אופציונלי: הזן שאלה אם נדרש מענה מהחניך (השאר ריק לצפייה בלבד)'
+                        }
                         className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
                       />
+                      {editingTask.type === 'media_question' && (
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          💡 אם לא תוגדר שאלה, החניך יוכל לסמן את המשימה כהושלמה מיד לאחר הצפייה ללא צורך בהזנת תשובה.
+                        </p>
+                      )}
                     </div>
                   )}
 
