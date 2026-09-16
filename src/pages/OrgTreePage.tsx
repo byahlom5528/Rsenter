@@ -35,11 +35,12 @@ export const OrgTreePage: React.FC = () => {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [highlightOnlyMyInterfaces, setHighlightOnlyMyInterfaces] = useState(false);
   
-  // Fixed Image Auto-Scale State (Acts like a fixed image/diagram with 100% visibility)
+  // High-performance Auto-Scale State (Zero-lag, strictly non-looping)
   const [scale, setScale] = useState(1);
   const [containerHeight, setContainerHeight] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
 
   const loadOrgData = async () => {
     try {
@@ -61,6 +62,7 @@ export const OrgTreePage: React.FC = () => {
     const unsubscribe = db.subscribe(loadOrgData);
     return () => {
       unsubscribe();
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, []);
 
@@ -97,45 +99,41 @@ export const OrgTreePage: React.FC = () => {
     setIsDrawerOpen(true);
   };
 
-  // Auto-scale calculator: Fits the entire tree 100% within container width like an image
-  const updateScale = useCallback(() => {
-    if (containerRef.current && contentRef.current) {
-      const containerW = containerRef.current.clientWidth - 16; // 8px padding per side
-      const unscaledW = contentRef.current.scrollWidth;
-      const unscaledH = contentRef.current.scrollHeight;
+  // High-performance scale calculator: Runs at most once per frame on window resize only (NO recursive loops!)
+  const calculateScale = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      if (containerRef.current && contentRef.current) {
+        const containerW = containerRef.current.clientWidth - 16;
+        const unscaledW = contentRef.current.scrollWidth;
+        const unscaledH = contentRef.current.scrollHeight;
 
-      if (unscaledW > 0 && containerW > 0) {
-        // Scale to fit container width exactly without horizontal scrolling
-        const newScale = Math.min(1, containerW / unscaledW);
-        setScale(newScale);
-        setContainerHeight(Math.ceil(unscaledH * newScale) + 20);
+        if (containerW > 0 && unscaledW > 0) {
+          const newScale = Math.min(1, Number((containerW / unscaledW).toFixed(3)));
+          setScale(newScale);
+          setContainerHeight(Math.ceil(unscaledH * newScale) + 16);
+        }
       }
-    }
+    });
   }, []);
 
-  // Recalculate scale on mount, resize, node updates, and collapse toggles
+  // Safe window-only resize listener (Will NEVER cause infinite loops on mobile or desktop)
   useEffect(() => {
     if (!isLoading && nodes.length > 0 && viewMode === 'tree') {
-      updateScale();
-      const timer = setTimeout(updateScale, 100);
+      calculateScale();
+      const timer = setTimeout(calculateScale, 60);
 
-      let observer: ResizeObserver | null = null;
-      if (typeof ResizeObserver !== 'undefined' && containerRef.current) {
-        observer = new ResizeObserver(() => {
-          updateScale();
-        });
-        observer.observe(containerRef.current);
-      }
-
-      window.addEventListener('resize', updateScale);
+      window.addEventListener('resize', calculateScale);
+      window.addEventListener('orientationchange', calculateScale);
 
       return () => {
         clearTimeout(timer);
-        if (observer) observer.disconnect();
-        window.removeEventListener('resize', updateScale);
+        window.removeEventListener('resize', calculateScale);
+        window.removeEventListener('orientationchange', calculateScale);
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
       };
     }
-  }, [isLoading, nodes.length, collapsedNodes, viewMode, updateScale]);
+  }, [isLoading, nodes.length, collapsedNodes, viewMode, calculateScale]);
 
   // Memoized cycle-safe tree builder
   const treeData = useMemo(() => {
@@ -222,7 +220,7 @@ export const OrgTreePage: React.FC = () => {
   };
 
   /* ========================================================================= */
-  /* CLASSIC REGULAR TREE RENDERING (FIXED IMAGE EMBEDDED DIAGRAM)            */
+  /* CLASSIC REGULAR TREE RENDERING (FIXED DIAGRAM, ULTRA FAST)               */
   /* ========================================================================= */
 
   const renderRegularTreeNode = (node: TreeNode, level: number = 1) => {
@@ -230,7 +228,7 @@ export const OrgTreePage: React.FC = () => {
     const hasChildren = node.children && node.children.length > 0;
     const isCollapsed = collapsedNodes[node.id];
 
-    // Card sizes with optimal proportions
+    // Card width classes: balanced proportions
     const cardWidthClass = 
       level === 1 
         ? 'w-44 sm:w-50 md:w-54' 
@@ -329,7 +327,6 @@ export const OrgTreePage: React.FC = () => {
 
             {node.children.length > 1 ? (
               <div className="flex justify-center items-start">
-                {/* Minimized gaps between boxes */}
                 <div className="flex gap-1 sm:gap-1.5 justify-center items-start">
                   {node.children.map((child, index) => {
                     const isFirst = index === 0;
@@ -446,7 +443,7 @@ export const OrgTreePage: React.FC = () => {
           <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
             {currentRole ? (
               <span>
-                מבנה יחידתי מלא בתצוגה קבועה. ממשקי העבודה מוצגים <strong>ביחס לתפקידך: {currentRole.name}</strong>.
+                מבנה יחידתי מלא בתצוגה קבועה וקלה. ממשקי העבודה מוצגים <strong>ביחס לתפקידך: {currentRole.name}</strong>.
               </span>
             ) : (
               'עץ מבנה יחידתי מלא בתצוגה קבועה המותאמת במלואה לרוחב המסך במחשב ובנייד.'
@@ -546,8 +543,8 @@ export const OrgTreePage: React.FC = () => {
 
       </div>
 
-      {/* Helpful Click Hint Banner */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50/80 border border-indigo-200/60 rounded-xl text-[11px] text-indigo-900 font-medium w-fit mr-auto">
+      {/* Click Hint */}
+      <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50/80 border border-indigo-200/60 rounded-xl text-[11px] text-indigo-900 font-medium w-fit mr-auto">
         <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
         <span>לחץ על כל תפקיד בעץ לצפייה בממשק העבודה המלא ובהגדרת התפקיד</span>
       </div>
@@ -562,24 +559,26 @@ export const OrgTreePage: React.FC = () => {
         
         /* 
            FIXED IMAGE-LIKE TREE CONTAINER:
-           - Works exactly like a fixed image/diagram
-           - 100% visible: Fits full container width seamlessly without cut-offs
-           - No scrollbars, no horizontal overflow, no dragging
+           - Works smoothly as a fixed image
+           - Zero recursive observers: never loops, 0% CPU consumption
+           - Native touchAction pan-y for immediate touch response on mobile
         */
         <div 
           ref={containerRef}
-          className="w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-2 sm:p-4 shadow-xs relative overflow-hidden flex flex-col items-center justify-start transition-all"
+          className="w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-2 sm:p-4 shadow-2xs relative overflow-hidden flex flex-col items-center justify-start"
           style={{
-            height: containerHeight ? `${containerHeight}px` : 'auto'
+            height: containerHeight ? `${containerHeight}px` : 'auto',
+            touchAction: 'pan-y'
           }}
         >
           <div 
             ref={contentRef}
-            className="flex flex-col items-center origin-top select-none transition-transform duration-150"
+            className="flex flex-col items-center origin-top select-none"
             style={{ 
               transform: `scale(${scale})`,
               transformOrigin: 'top center',
-              width: 'max-content'
+              width: 'max-content',
+              willChange: 'transform'
             }}
           >
             {treeData.map((rootNode) => renderRegularTreeNode(rootNode, 1))}
