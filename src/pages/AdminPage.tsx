@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   ShieldAlert, 
   Users, 
@@ -19,7 +20,15 @@ import {
   Award,
   Check,
   TrendingUp,
-  RotateCcw
+  RotateCcw,
+  Video,
+  PlayCircle,
+  FileText,
+  ExternalLink,
+  Sparkles,
+  Eye,
+  EyeOff,
+  RefreshCw
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../services/db';
@@ -27,12 +36,11 @@ import {
   UserProgressOverview, 
   Role, 
   Task, 
-  BackpackResource, 
   OrgNode,
   TaskType,
   BinaryQuestionItem
 } from '../types/database';
-import { ensureValidUrl } from '../utils/mediaUtils';
+import { ensureValidUrl, getMediaInfo } from '../utils/mediaUtils';
 import { 
   parseBinaryQuestions, 
   serializeBinaryQuestions, 
@@ -41,6 +49,7 @@ import {
 
 export const AdminPage: React.FC = () => {
   useAuth();
+  const navigate = useNavigate();
   
   const [activeTab, setActiveTab] = useState<'users' | 'tasks' | 'backpack' | 'orgTree'>('users');
   const [isLoading, setIsLoading] = useState(true);
@@ -67,10 +76,21 @@ export const AdminPage: React.FC = () => {
   const [roleFormName, setRoleFormName] = useState('');
   const [roleFormDesc, setRoleFormDesc] = useState('');
 
-  // 3. Backpack CMS State
-  const [backpackResources, setBackpackResources] = useState<BackpackResource[]>([]);
-  const [editingResource, setEditingResource] = useState<Partial<BackpackResource> | null>(null);
-  const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
+  // 3. Backpack Media CMS State
+  const [isAddMediaModalOpen, setIsAddMediaModalOpen] = useState(false);
+  const [newMediaForm, setNewMediaForm] = useState<{
+    id?: string;
+    title: string;
+    media_url: string;
+    role_id: string;
+    show_in_backpack: boolean;
+  }>({
+    id: undefined,
+    title: '',
+    media_url: '',
+    role_id: '',
+    show_in_backpack: true,
+  });
 
   // 4. Org Tree CMS State
   const [orgNodes, setOrgNodes] = useState<OrgNode[]>([]);
@@ -80,25 +100,44 @@ export const AdminPage: React.FC = () => {
 
   // System notification banner
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [isSyncingSupabase, setIsSyncingSupabase] = useState(false);
 
   const showStatus = (text: string, type: 'success' | 'error' = 'success') => {
     setStatusMessage({ text, type });
-    setTimeout(() => setStatusMessage(null), 4000);
+    setTimeout(() => setStatusMessage(null), 5000);
+  };
+
+  const handleSyncToSupabase = async () => {
+    setIsSyncingSupabase(true);
+    try {
+      const res = await db.syncLocalTasksToSupabase();
+      if (res.errors.length === 0) {
+        showStatus(`סנכרון מלא לסופרבייס הושלם בהצלחה! (${res.synced} משימות ופריטי מדיה)`);
+      } else if (res.synced > 0) {
+        showStatus(`סונכרנו ${res.synced} מתוך ${res.total} פריטים לסופרבייס. חלק מהפריטים נדחו - יש להריץ את סקריפט ה-SQL בסופרבייס`, 'error');
+      } else {
+        showStatus(`שגיאה בסנכרון לסופרבייס: יש לוודא שהורץ סקריפט ה-SQL בסופרבייס לעדכון עמודות המדיה`, 'error');
+      }
+      await loadAllData(false);
+    } catch (err) {
+      console.error('Failed to sync to Supabase', err);
+      showStatus('שגיאה בסנכרון מול Supabase', 'error');
+    } finally {
+      setIsSyncingSupabase(false);
+    }
   };
 
   const loadAllData = async (showSpinner = false) => {
     if (showSpinner) setIsLoading(true);
     try {
-      const [overviews, allRoles, resources, nodes] = await Promise.all([
+      const [overviews, allRoles, nodes] = await Promise.all([
         db.getAllUsersProgressOverview(),
         db.getRoles(),
-        db.getBackpackResources(),
         db.getOrgNodes(),
       ]);
 
       setUserOverviews(overviews);
       setRoles(allRoles);
-      setBackpackResources(resources);
       setOrgNodes(nodes);
 
       const targetRole = selectedRoleIdRef.current || (allRoles[0] ? allRoles[0].id : '');
@@ -130,11 +169,10 @@ export const AdminPage: React.FC = () => {
       if (e.key === 'Escape') {
         setIsTaskModalOpen(false);
         setIsRoleModalOpen(false);
-        setIsResourceModalOpen(false);
+        setIsAddMediaModalOpen(false);
         setIsNodeModalOpen(false);
         setEditingTask(null);
         setEditingRole(null);
-        setEditingResource(null);
         setEditingNode(null);
         setSelectedUserOverview(null);
       }
@@ -247,7 +285,8 @@ export const AdminPage: React.FC = () => {
     try {
       const taskToSave = {
         ...editingTask,
-        media_url: editingTask.type === 'media_question' ? (editingTask.media_url?.trim() || null) : null,
+        media_url: editingTask.media_url?.trim() || null,
+        hide_from_backpack: Boolean(editingTask.hide_from_backpack),
         question_prompt: editingTask.type === 'binary_choice'
           ? serializeBinaryQuestions(binaryQuestions)
           : (editingTask.type === 'text_question' || editingTask.type === 'media_question')
@@ -400,56 +439,106 @@ export const AdminPage: React.FC = () => {
     }
   };
 
-  // ==================== BACKPACK CMS HANDLERS ====================
-  const handleOpenNewResource = () => {
-    setEditingResource({
-      title: '',
-      category: 'נהלים ופקודות',
-      description: '',
-      file_url: '',
-      external_link: '',
-    });
-    setIsResourceModalOpen(true);
-  };
-
-  const handleSaveResource = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingResource || !editingResource.title) return;
-
+  // ==================== BACKPACK MEDIA CMS HANDLERS ====================
+  const handleToggleBackpackVisibility = async (task: Task) => {
+    const newHide = !task.hide_from_backpack;
     try {
-      if (editingResource.id) {
-        await db.updateBackpackResource(editingResource.id, {
-          ...editingResource,
-          file_url: editingResource.file_url ? ensureValidUrl(editingResource.file_url) : null,
-          external_link: editingResource.external_link ? ensureValidUrl(editingResource.external_link) : null,
-        });
-        showStatus('המשאב עודכן בהצלחה');
-      } else {
-        await db.createBackpackResource({
-          title: editingResource.title,
-          category: editingResource.category || 'כללי',
-          description: editingResource.description || '',
-          file_url: editingResource.file_url ? ensureValidUrl(editingResource.file_url) : null,
-          external_link: editingResource.external_link ? ensureValidUrl(editingResource.external_link) : null,
-        });
-        showStatus('משאב חדש נוסף בהצלחה');
+      await db.updateTask(task.id, { hide_from_backpack: newHide });
+      showStatus(newHide ? 'המדיה הוסתרה מהתרמיל' : 'המדיה מוצגת כעת בתרמיל');
+      if (selectedRoleId) {
+        const tasks = await db.getTasksByRole(selectedRoleId);
+        setCurrentRoleTasks(tasks);
       }
-      setIsResourceModalOpen(false);
-      setEditingResource(null);
-      const res = await db.getBackpackResources();
-      setBackpackResources(res);
     } catch (err) {
-      console.error('Error saving resource', err);
-      showStatus('שגיאה בשמירת המשאב', 'error');
+      console.error('Failed to toggle backpack visibility', err);
+      showStatus('שגיאה בעדכון הגדרות המדיה בתרמיל', 'error');
     }
   };
 
-  const handleDeleteResource = async (id: string) => {
-    if (window.confirm('האם למחוק משאב זה?')) {
-      await db.deleteBackpackResource(id);
-      showStatus('המשאב נמחק');
-      const res = await db.getBackpackResources();
-      setBackpackResources(res);
+  const handleOpenAddMedia = () => {
+    setNewMediaForm({
+      id: undefined,
+      title: '',
+      media_url: '',
+      role_id: selectedRoleId || (roles[0] ? roles[0].id : ''),
+      show_in_backpack: true,
+    });
+    setIsAddMediaModalOpen(true);
+  };
+
+  const handleEditStandaloneMedia = (task: Task) => {
+    setNewMediaForm({
+      id: task.id,
+      title: task.title,
+      media_url: task.media_url || '',
+      role_id: task.role_id,
+      show_in_backpack: !task.hide_from_backpack,
+    });
+    setIsAddMediaModalOpen(true);
+  };
+
+  const handleSaveNewMedia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMediaForm.title.trim() || !newMediaForm.media_url.trim() || !newMediaForm.role_id) {
+      showStatus('יש למלא כותרת, קישור למדיה ותפקיד', 'error');
+      return;
+    }
+
+    try {
+      if (newMediaForm.id) {
+        await db.updateTask(newMediaForm.id, {
+          role_id: newMediaForm.role_id,
+          title: newMediaForm.title.trim(),
+          media_url: newMediaForm.media_url.trim(),
+          hide_from_backpack: !newMediaForm.show_in_backpack,
+        });
+        showStatus('המדיה עודכנה בהצלחה');
+      } else {
+        const roleTasks = await db.getTasksByRole(newMediaForm.role_id);
+        await db.createTask({
+          role_id: newMediaForm.role_id,
+          title: newMediaForm.title.trim(),
+          description: '',
+          step_order: roleTasks.length + 1,
+          type: 'simple_check',
+          media_url: newMediaForm.media_url.trim(),
+          question_prompt: null,
+          hide_from_backpack: !newMediaForm.show_in_backpack,
+          is_standalone_media: true,
+        });
+        showStatus('מדיה חדשה נוספה בהצלחה לתרמיל');
+      }
+
+      setIsAddMediaModalOpen(false);
+      if (newMediaForm.role_id === selectedRoleId) {
+        const tasks = await db.getTasksByRole(selectedRoleId);
+        setCurrentRoleTasks(tasks);
+      } else {
+        await handleRoleChange(newMediaForm.role_id);
+      }
+    } catch (err) {
+      console.error('Error saving media', err);
+      showStatus('שגיאה בשמירת מדיה לתרמיל', 'error');
+    }
+  };
+
+  const handleDeleteMedia = async (task: Task) => {
+    if (window.confirm(`האם להסיר את המדיה "${task.title}" מהתרמיל?`)) {
+      try {
+        if (task.is_standalone_media) {
+          await db.deleteTask(task.id);
+        } else {
+          await db.updateTask(task.id, { media_url: null });
+        }
+        showStatus('המדיה הוסרה מהתרמיל');
+        if (selectedRoleId) {
+          const tasks = await db.getTasksByRole(selectedRoleId);
+          setCurrentRoleTasks(tasks);
+        }
+      } catch (err) {
+        console.error('Failed to remove media', err);
+        showStatus('שגיאה בהסרת המדיה', 'error');
+      }
     }
   };
 
@@ -596,53 +685,65 @@ export const AdminPage: React.FC = () => {
       )}
 
       {/* Admin Tabs Bar (Horizontal scroll on mobile) */}
-      <div className="sticky top-14 md:top-16 z-30 bg-slate-50/95 backdrop-blur-md py-2.5 -mx-3.5 px-3.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-slate-200/80 shadow-xs flex gap-2 overflow-x-auto no-scrollbar">
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
-            activeTab === 'users'
-              ? 'bg-slate-900 text-white shadow-md'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>מעקב חניכים ({userOverviews.length})</span>
-        </button>
+      <div className="sticky top-14 md:top-16 z-30 bg-slate-50/95 backdrop-blur-md py-2.5 -mx-3.5 px-3.5 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-slate-200/80 shadow-xs flex items-center justify-between gap-2 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
+              activeTab === 'users'
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>מעקב חניכים ({userOverviews.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('tasks')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
+              activeTab === 'tasks'
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <CheckSquare className="w-4 h-4" />
+            <span>ניהול משימות ותפקידים</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('backpack')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
+              activeTab === 'backpack'
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <Briefcase className="w-4 h-4" />
+            <span>ניהול התרמיל</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('orgTree')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
+              activeTab === 'orgTree'
+                ? 'bg-slate-900 text-white shadow-md'
+                : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+            }`}
+          >
+            <Network className="w-4 h-4" />
+            <span>עץ מבנה</span>
+          </button>
+        </div>
 
         <button
-          onClick={() => setActiveTab('tasks')}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
-            activeTab === 'tasks'
-              ? 'bg-slate-900 text-white shadow-md'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
+          onClick={handleSyncToSupabase}
+          disabled={isSyncingSupabase}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-all shadow-xs shrink-0"
+          title="סנכרן את כל המשימות ופריטי המדיה מול בסיס הנתונים Supabase"
         >
-          <CheckSquare className="w-4 h-4" />
-          <span>ניהול משימות ותפקידים</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('backpack')}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
-            activeTab === 'backpack'
-              ? 'bg-slate-900 text-white shadow-md'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <Briefcase className="w-4 h-4" />
-          <span>ניהול התרמיל</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('orgTree')}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl font-bold text-xs sm:text-sm shrink-0 transition-all ${
-            activeTab === 'orgTree'
-              ? 'bg-slate-900 text-white shadow-md'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <Network className="w-4 h-4" />
-          <span>עץ מבנה</span>
+          <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSupabase ? 'animate-spin text-emerald-600' : 'text-emerald-500'}`} />
+          <span>{isSyncingSupabase ? 'מסנכרן...' : 'סנכרון לסופרבייס'}</span>
         </button>
       </div>
 
@@ -1075,12 +1176,17 @@ export const AdminPage: React.FC = () => {
 
           {/* Sequential Tasks List for Selected Role */}
           <div className="space-y-3">
-            {currentRoleTasks.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
-                לא הוגדרו משימות עבור תפקיד זה. לחץ על "הוסף משימה" להגדרת השלב הראשון.
-              </div>
-            ) : (
-              currentRoleTasks.map((task, index) => (
+            {(() => {
+              const onboardingTasks = currentRoleTasks.filter((t) => !t.is_standalone_media);
+              if (onboardingTasks.length === 0) {
+                return (
+                  <div className="py-12 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
+                    לא הוגדרו משימות עבור תפקיד זה. לחץ על "הוסף משימה" להגדרת השלב הראשון.
+                  </div>
+                );
+              }
+
+              return onboardingTasks.map((task, index) => (
                 <div
                   key={task.id}
                   className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
@@ -1091,20 +1197,20 @@ export const AdminPage: React.FC = () => {
                       <button
                         type="button"
                         disabled={index === 0}
-                        onClick={() => handleMoveTaskOrder(index, 'up')}
+                        onClick={() => handleMoveTaskOrder(currentRoleTasks.findIndex((t) => t.id === task.id), 'up')}
                         className={`p-1 rounded text-slate-500 hover:bg-slate-100 ${index === 0 ? 'opacity-30 cursor-not-allowed' : ''}`}
                         title="העבר שלב למעלה"
                       >
                         <ArrowUp className="w-3.5 h-3.5" />
                       </button>
                       <span className="w-6 h-6 rounded-md bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center">
-                        {task.step_order}
+                        {index + 1}
                       </span>
                       <button
                         type="button"
-                        disabled={index === currentRoleTasks.length - 1}
-                        onClick={() => handleMoveTaskOrder(index, 'down')}
-                        className={`p-1 rounded text-slate-500 hover:bg-slate-100 ${index === currentRoleTasks.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}`}
+                        disabled={index === onboardingTasks.length - 1}
+                        onClick={() => handleMoveTaskOrder(currentRoleTasks.findIndex((t) => t.id === task.id), 'down')}
+                        className={`p-1 rounded text-slate-500 hover:bg-slate-100 ${index === onboardingTasks.length - 1 ? 'opacity-30 cursor-not-allowed' : ''}`}
                         title="העבר שלב למטה"
                       >
                         <ArrowDown className="w-3.5 h-3.5" />
@@ -1168,8 +1274,8 @@ export const AdminPage: React.FC = () => {
                     </button>
                   </div>
                 </div>
-              ))
-            )}
+              ));
+            })()}
           </div>
 
           {/* Role Create / Edit Modal */}
@@ -1403,18 +1509,30 @@ export const AdminPage: React.FC = () => {
                     </div>
                   )}
 
-                  {editingTask.type === 'media_question' && (
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1">קישור לסרטון או מדיה</label>
-                      <input
-                        type="text"
-                        value={editingTask.media_url || ''}
-                        onChange={(e) => setEditingTask({ ...editingTask, media_url: e.target.value })}
-                        placeholder="https://www.youtube.com/watch?v=..."
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500 font-mono text-xs"
-                      />
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700">קישור לסרטון, מצגת או מדיה</label>
+                      <span className="text-[11px] text-slate-400 font-normal">YouTube, Drive, MP4, מסמך</span>
                     </div>
-                  )}
+                    <input
+                      type="text"
+                      value={editingTask.media_url || ''}
+                      onChange={(e) => setEditingTask({ ...editingTask, media_url: e.target.value })}
+                      placeholder="https://www.youtube.com/watch?v=... או קישור ל-Google Drive / קובץ"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500 font-mono text-xs"
+                    />
+                    {editingTask.media_url && editingTask.media_url.trim().length > 0 && (
+                      <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={!editingTask.hide_from_backpack}
+                          onChange={(e) => setEditingTask({ ...editingTask, hide_from_backpack: !e.target.checked })}
+                          className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500"
+                        />
+                        <span className="text-xs font-medium text-slate-700">הצג מדיה זו ב"תרמיל שלי" של החניך</span>
+                      </label>
+                    )}
+                  </div>
 
                   {(editingTask.type === 'media_question' || editingTask.type === 'text_question') && (
                     <div>
@@ -1470,65 +1588,256 @@ export const AdminPage: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* TAB 3: BACKPACK CMS */}
+      {/* TAB 3: BACKPACK MEDIA CMS */}
       {/* ========================================================================= */}
       {activeTab === 'backpack' && (
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-lg text-slate-900">ספריית משאבי ידע ומסמכים ({backpackResources.length})</h3>
-            <button
-              onClick={handleOpenNewResource}
-              className="flex items-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-sm transition-all"
-            >
-              <Plus className="w-4 h-4" />
-              <span>הוסף משאב חדש לתרמיל</span>
-            </button>
+
+          {/* Top Banner with Quick Actions */}
+          <div className="bg-gradient-to-r from-brand-950 via-slate-900 to-brand-950 rounded-2xl p-5 sm:p-6 text-white border border-brand-800/40 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="space-y-1.5 max-w-xl">
+              <div className="inline-flex items-center gap-1.5 bg-brand-500/20 text-brand-300 border border-brand-400/30 text-[11px] font-bold px-2.5 py-0.5 rounded-full">
+                <Sparkles className="w-3 h-3 text-amber-300" />
+                <span>ניהול מדיה ותרמיל</span>
+              </div>
+              <h3 className="font-extrabold text-base sm:text-lg text-white">
+                מדיות התרמיל מבוססות תפקיד
+              </h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                מדיות התרמיל של החניך מסונכרנות עם משימות התפקיד שלו. כאן תוכל לצפות בכל המדיות לפי תפקיד, להסתיר או להציג כל מדיה בתרמיל, ולהוסיף מדיה חדשה.
+              </p>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <button
+                onClick={handleOpenAddMedia}
+                className="flex items-center gap-1.5 bg-brand-500 hover:bg-brand-600 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-sm"
+              >
+                <Plus className="w-4 h-4" />
+                <span>הוסף מדיה חדשה</span>
+              </button>
+
+              <button
+                onClick={() => navigate('/backpack')}
+                className="flex items-center gap-1.5 bg-white/10 hover:bg-white/20 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all border border-white/20"
+              >
+                <Eye className="w-4 h-4" />
+                <span>צפייה בתרמיל החניכים</span>
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {backpackResources.map((res) => (
-              <div
-                key={res.id}
-                className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold bg-brand-50 text-brand-700 px-2.5 py-0.5 rounded-full border border-brand-200">
-                      {res.category}
+          {/* Role-Based Media Management Card */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div>
+                <h4 className="font-bold text-sm sm:text-base text-slate-900">
+                  מדיות לפי תפקיד
+                </h4>
+                <p className="text-xs text-slate-500">
+                  בחר תפקיד כדי לנהל את פריטי המדיה שלו, להסתיר מהתרמיל או להציג
+                </p>
+              </div>
+            </div>
+
+            {/* Role Switcher */}
+            <div className="flex flex-wrap gap-2">
+              {roles.map((r) => {
+                const isSelected = selectedRoleId === r.id;
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => handleRoleChange(r.id)}
+                    className={`text-xs px-3.5 py-2 rounded-xl font-bold transition-all flex items-center gap-1.5 ${
+                      isSelected
+                        ? 'bg-brand-600 text-white shadow-xs'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                    }`}
+                  >
+                    <span>{r.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Media list of currently selected role */}
+            {(() => {
+              const mediaTasks = currentRoleTasks.filter((t) => Boolean(t.media_url && t.media_url.trim().length > 0));
+              const nonMediaTasks = currentRoleTasks.filter((t) => !Boolean(t.media_url && t.media_url.trim().length > 0));
+              const activeRoleObj = roles.find((r) => r.id === selectedRoleId);
+
+              return (
+                <div className="space-y-4 pt-2">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>
+                      נמצאו <strong className="text-brand-600 font-bold">{mediaTasks.length}</strong> פריטי מדיה עבור {activeRoleObj?.name || 'תפקיד זה'}
                     </span>
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => { setEditingResource(res); setIsResourceModalOpen(true); }}
-                        className="p-1.5 text-slate-500 hover:text-brand-600 rounded-lg hover:bg-slate-100"
-                        title="ערוך משאב"
-                      >
-                        <Edit3 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteResource(res.id)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-red-50"
-                        title="מחק משאב"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
                   </div>
 
-                  <h4 className="font-bold text-base text-slate-900 mb-1">{res.title}</h4>
-                  <p className="text-xs text-slate-600 leading-relaxed mb-3">{res.description}</p>
-                </div>
+                  {mediaTasks.length === 0 ? (
+                    <div className="p-8 bg-slate-50 rounded-xl border border-dashed border-slate-300 text-center text-slate-500 space-y-3">
+                      <p className="text-xs font-medium">לא נמצאו פריטי מדיה בתפקיד זה.</p>
+                      <button
+                        onClick={handleOpenAddMedia}
+                        className="inline-flex items-center gap-1.5 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-xs"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>הוסף מדיה ראשונה לתפקיד זה</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {mediaTasks.map((task) => {
+                        const mediaInfo = getMediaInfo(task.media_url || '');
+                        const isHidden = Boolean(task.hide_from_backpack);
 
-                <div className="text-[11px] text-slate-400 font-mono truncate">
-                  {res.file_url ? `קובץ: ${res.file_url}` : `קישור: ${res.external_link}`}
+                        return (
+                          <div
+                            key={task.id}
+                            className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
+                              isHidden
+                                ? 'bg-slate-50/60 border-slate-200 opacity-80'
+                                : 'bg-white border-slate-200/90 shadow-2xs hover:shadow-xs hover:border-brand-300'
+                            }`}
+                          >
+                            <div>
+                              <div className="flex items-center justify-between gap-2 mb-2.5">
+                                {/* Media Type Badge */}
+                                {mediaInfo.type === 'youtube' || mediaInfo.type === 'loom' ? (
+                                  <span className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                    <Video className="w-3 h-3 text-red-600" />
+                                    <span>סרטון YouTube</span>
+                                  </span>
+                                ) : mediaInfo.type === 'google_drive' ? (
+                                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                    <FileText className="w-3 h-3 text-amber-600" />
+                                    <span>Google Drive</span>
+                                  </span>
+                                ) : mediaInfo.type === 'direct_video' ? (
+                                  <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                    <PlayCircle className="w-3 h-3 text-blue-600" />
+                                    <span>קובץ וידאו</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                    <FileText className="w-3 h-3 text-slate-500" />
+                                    <span>מסמך / קישור</span>
+                                  </span>
+                                )}
+
+                                {/* Visibility Badge */}
+                                {isHidden ? (
+                                  <span className="text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                    <EyeOff className="w-3 h-3 text-amber-600" />
+                                    <span>מוסתר מהתרמיל</span>
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                    <Eye className="w-3 h-3 text-emerald-600" />
+                                    <span>מוצג בתרמיל</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              <h5 className="font-bold text-sm text-slate-900 mb-2">{task.title}</h5>
+                            </div>
+
+                            <div className="pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <a
+                                href={ensureValidUrl(task.media_url || '')}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-[11px] text-brand-600 hover:text-brand-800 underline flex items-center gap-1 truncate max-w-[180px]"
+                              >
+                                <ExternalLink className="w-3 h-3 shrink-0" />
+                                <span className="truncate">{task.media_url}</span>
+                              </a>
+
+                              <div className="flex items-center gap-1.5">
+                                {/* Toggle visibility button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleBackpackVisibility(task)}
+                                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1 ${
+                                    isHidden
+                                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                                      : 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200'
+                                  }`}
+                                  title={isHidden ? 'הצג מדיה זו בתרמיל החניך' : 'הסתר מדיה זו מתרמיל החניך'}
+                                >
+                                  {isHidden ? (
+                                    <>
+                                      <Eye className="w-3 h-3" />
+                                      <span>הצג בתרמיל</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <EyeOff className="w-3 h-3" />
+                                      <span>הסתר מהתרמיל</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                {/* Edit button - only for standalone media, NEVER for tasks taken from onboarding */}
+                                {Boolean(task.is_standalone_media) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditStandaloneMedia(task)}
+                                    className="text-[11px] font-bold text-slate-700 hover:text-brand-600 bg-white hover:bg-slate-50 px-2 py-1 rounded-lg border border-slate-200 transition-colors flex items-center gap-1"
+                                    title="ערוך כותרת ומדיה"
+                                  >
+                                    <Edit3 className="w-3 h-3" />
+                                    <span>ערוך</span>
+                                  </button>
+                                )}
+
+                                {/* Delete media button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteMedia(task)}
+                                  className="text-[11px] font-bold text-slate-400 hover:text-red-600 p-1 rounded-lg hover:bg-red-50 transition-colors"
+                                  title="הסר מדיה זו"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Tasks in this role without media (quick add) */}
+                  {nonMediaTasks.length > 0 && (
+                    <div className="mt-4 pt-3 border-t border-slate-100">
+                      <h5 className="text-xs font-bold text-slate-500 mb-2">
+                        משימות נוספות בתפקיד זה ללא קישור למדיה ({nonMediaTasks.length}):
+                      </h5>
+                      <div className="flex flex-wrap gap-2">
+                        {nonMediaTasks.slice(0, 8).map((t) => (
+                          <button
+                            key={t.id}
+                            onClick={() => handleEditTask(t)}
+                            className="text-xs bg-slate-100 hover:bg-brand-50 text-slate-600 hover:text-brand-700 px-2.5 py-1 rounded-lg border border-slate-200 hover:border-brand-200 transition-colors flex items-center gap-1"
+                            title="לחץ להוספת קישור מדיה למשימה זו"
+                          >
+                            <Plus className="w-3 h-3 text-brand-500" />
+                            <span>{t.title}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })()}
           </div>
 
-          {/* Resource Modal */}
-          {isResourceModalOpen && editingResource && (
+          {/* Modal: Add New Media to Backpack */}
+          {isAddMediaModalOpen && (
             <div 
-              onClick={() => setIsResourceModalOpen(false)}
+              onClick={() => setIsAddMediaModalOpen(false)}
               className="fixed inset-0 z-[70] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 pb-safe"
             >
               <div 
@@ -1537,76 +1846,69 @@ export const AdminPage: React.FC = () => {
               >
                 <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 sticky top-0 bg-white z-10">
                   <h3 className="font-bold text-base text-slate-900">
-                    {editingResource.id ? 'עריכת משאב תרמיל' : 'הוספת משאב חדש לתרמיל'}
+                    {newMediaForm.id ? 'עריכת מדיה בתרמיל' : 'הוספת מדיה חדשה לתרמיל'}
                   </h3>
-                  <button onClick={() => setIsResourceModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                  <button onClick={() => setIsAddMediaModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                     <X className="w-5 h-5" />
                   </button>
                 </div>
 
-                <form onSubmit={handleSaveResource} className="space-y-4">
+                <form onSubmit={handleSaveNewMedia} className="space-y-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">שם המשאב / מסמך</label>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">שיוך לתפקיד</label>
+                    <select
+                      value={newMediaForm.role_id}
+                      onChange={(e) => setNewMediaForm({ ...newMediaForm, role_id: e.target.value })}
+                      required
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white outline-none focus:border-brand-500"
+                    >
+                      {roles.map((r) => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">כותרת המדיה</label>
                     <input
                       type="text"
                       required
-                      value={editingResource.title || ''}
-                      onChange={(e) => setEditingResource({ ...editingResource, title: e.target.value })}
-                      placeholder="לדוגמה: פקודת השגרה היחידתית"
+                      value={newMediaForm.title}
+                      onChange={(e) => setNewMediaForm({ ...newMediaForm, title: e.target.value })}
+                      placeholder="לדוגמה: סרטון הדרכה במערכת השו''ב"
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">קטגוריה</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700">קישור למדיה</label>
+                      <span className="text-[11px] text-slate-400 font-normal">YouTube, Google Drive, MP4, מסמך</span>
+                    </div>
                     <input
                       type="text"
                       required
-                      value={editingResource.category || ''}
-                      onChange={(e) => setEditingResource({ ...editingResource, category: e.target.value })}
-                      placeholder="נהלים ופקודות / אבטחת מידע / מצגות..."
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">תקציר ותיאור</label>
-                    <textarea
-                      rows={3}
-                      required
-                      value={editingResource.description || ''}
-                      onChange={(e) => setEditingResource({ ...editingResource, description: e.target.value })}
-                      placeholder="תקציר מהות המסמך והנחיות שימוש..."
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
-                    ></textarea>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">קישור למסמך או קובץ</label>
-                    <input
-                      type="text"
-                      value={editingResource.file_url || ''}
-                      onChange={(e) => setEditingResource({ ...editingResource, file_url: e.target.value })}
-                      placeholder="https://example.org/doc.pdf"
+                      value={newMediaForm.media_url}
+                      onChange={(e) => setNewMediaForm({ ...newMediaForm, media_url: e.target.value })}
+                      placeholder="https://www.youtube.com/watch?v=... או קישור ל-Google Drive"
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500 font-mono text-xs"
                     />
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">או קישור לפורטל חיצוני</label>
+                  <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
                     <input
-                      type="text"
-                      value={editingResource.external_link || ''}
-                      onChange={(e) => setEditingResource({ ...editingResource, external_link: e.target.value })}
-                      placeholder="https://support.example.org"
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500 font-mono text-xs"
+                      type="checkbox"
+                      checked={newMediaForm.show_in_backpack}
+                      onChange={(e) => setNewMediaForm({ ...newMediaForm, show_in_backpack: e.target.checked })}
+                      className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500"
                     />
-                  </div>
+                    <span className="text-xs font-medium text-slate-700">הצג מדיה זו ב"תרמיל שלי" של חניכי התפקיד</span>
+                  </label>
 
                   <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
                     <button
                       type="button"
-                      onClick={() => setIsResourceModalOpen(false)}
+                      onClick={() => setIsAddMediaModalOpen(false)}
                       className="px-4 py-2 bg-slate-100 text-slate-700 font-bold text-xs rounded-xl"
                     >
                       ביטול
@@ -1615,7 +1917,7 @@ export const AdminPage: React.FC = () => {
                       type="submit"
                       className="px-5 py-2 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-sm"
                     >
-                      שמור משאב
+                      {newMediaForm.id ? 'שמור שינויים' : 'הוסף מדיה לתרמיל'}
                     </button>
                   </div>
                 </form>

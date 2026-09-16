@@ -57,7 +57,8 @@ export const DashboardPage: React.FC = () => {
     }
 
     try {
-      const roleTasks = await db.getTasksByRole(currentUser.role_id);
+      const allRoleTasks = await db.getTasksByRole(currentUser.role_id);
+      const roleTasks = allRoleTasks.filter((t) => !t.is_standalone_media);
       const userProgress = await db.getUserProgress(currentUser.id);
 
       // Pre-fill answer state from existing progress

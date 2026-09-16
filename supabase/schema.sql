@@ -38,8 +38,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     type VARCHAR(50) NOT NULL CHECK (type IN ('simple_check', 'media_question', 'text_question', 'binary_choice')),
     media_url TEXT,
     question_prompt TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
-    CONSTRAINT unique_role_step UNIQUE (role_id, step_order)
+    hide_from_backpack BOOLEAN DEFAULT FALSE NOT NULL,
+    is_standalone_media BOOLEAN DEFAULT FALSE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 -- 4. USER TASK PROGRESS TABLE

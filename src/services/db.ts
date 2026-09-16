@@ -97,7 +97,10 @@ class DBService {
       this.users = getStored(STORAGE_KEYS.USERS, INITIAL_USERS);
       this.tasks = getStored(STORAGE_KEYS.TASKS, INITIAL_TASKS);
       this.progress = getStored(STORAGE_KEYS.PROGRESS, INITIAL_PROGRESS);
-      this.backpack = getStored(STORAGE_KEYS.BACKPACK, INITIAL_BACKPACK);
+      this.backpack = getStored(STORAGE_KEYS.BACKPACK, INITIAL_BACKPACK).map((r) => ({
+        ...r,
+        media_url: r.media_url || r.file_url || r.external_link || null,
+      }));
       this.orgNodes = getStored(STORAGE_KEYS.ORG_NODES, INITIAL_ORG_NODES);
 
       // Auto-migrate & sanitize any non-UUID legacy IDs from localStorage
@@ -144,6 +147,18 @@ class DBService {
         }
       });
 
+      // Backfill media_url from INITIAL_TASKS if missing in stored tasks
+      const initialTaskMap = new Map(INITIAL_TASKS.map((it) => [it.id, it]));
+      this.tasks.forEach((t) => {
+        if (!t.media_url) {
+          const defaultTask = initialTaskMap.get(t.id);
+          if (defaultTask?.media_url) {
+            t.media_url = defaultTask.media_url;
+            needsSave = true;
+          }
+        }
+      });
+
       if (needsSave) {
         this.saveAll();
       }
@@ -187,7 +202,26 @@ class DBService {
         changed = true;
       }
       if (!tasksRes.error && tasksRes.data && tasksRes.data.length > 0) {
-        this.tasks = tasksRes.data as Task[];
+        const localTaskMap = new Map(this.tasks.map((t) => [t.id, t]));
+        const supabaseTaskIds = new Set(tasksRes.data.map((t: any) => t.id));
+
+        const updatedTasks = (tasksRes.data as any[]).map((st) => {
+          const local = localTaskMap.get(st.id);
+          return {
+            ...st,
+            hide_from_backpack: st.hide_from_backpack !== undefined ? Boolean(st.hide_from_backpack) : Boolean(local?.hide_from_backpack),
+            is_standalone_media: st.is_standalone_media !== undefined ? Boolean(st.is_standalone_media) : Boolean(local?.is_standalone_media),
+          } as Task;
+        });
+
+        // Retain any locally added tasks/media not yet in Supabase
+        this.tasks.forEach((lt) => {
+          if (!supabaseTaskIds.has(lt.id)) {
+            updatedTasks.push(lt);
+          }
+        });
+
+        this.tasks = updatedTasks;
         changed = true;
       }
       if (!progressRes.error && progressRes.data) {
@@ -544,7 +578,7 @@ class DBService {
     return [...this.tasks];
   }
 
-  async createTask(taskData: Omit<Task, 'id' | 'created_at'>): Promise<Task> {
+  async createTask(taskData: Omit<Task, 'id' | 'created_at' | 'step_order'> & { step_order?: number }): Promise<Task> {
     const existingTasksForRole = this.tasks.filter((t) => t.role_id === taskData.role_id);
     const stepOrder = taskData.step_order || existingTasksForRole.length + 1;
 
@@ -568,6 +602,19 @@ class DBService {
           return data as Task;
         } else if (error) {
           console.warn('Supabase createTask error:', error);
+          // If schema cache doesn't have the new columns yet (PGRST204), try inserting with basic columns
+          if (error.code === 'PGRST204') {
+            const { hide_from_backpack, is_standalone_media, ...basicTask } = newTask;
+            const retryRes = await supabase.from('tasks').insert([basicTask]).select().single();
+            if (!retryRes.error && retryRes.data) {
+              const merged = { ...retryRes.data, hide_from_backpack, is_standalone_media } as Task;
+              this.tasks.push(merged);
+              await this.normalizeTaskStepsForRole(merged.role_id);
+              this.saveAll();
+              this.notify();
+              return merged;
+            }
+          }
         }
       } catch (e) {
         console.warn('Supabase createTask exception, fallback to local', e);
@@ -578,20 +625,22 @@ class DBService {
     this.tasks.push(newTask);
     await this.normalizeTaskStepsForRole(newTask.role_id);
 
-    // Auto add progress row for users with this role
-    const relevantUsers = this.users.filter((u) => u.role_id === newTask.role_id);
-    for (const u of relevantUsers) {
-      const exists = this.progress.some((p) => p.user_id === u.id && p.task_id === newTask.id);
-      if (!exists) {
-        this.progress.push({
-          id: generateUUID(),
-          user_id: u.id,
-          task_id: newTask.id,
-          is_completed: false,
-          answer_text: null,
-          completed_at: null,
-          created_at: new Date().toISOString(),
-        });
+    // Auto add progress row for users with this role (only for onboarding tasks)
+    if (!newTask.is_standalone_media) {
+      const relevantUsers = this.users.filter((u) => u.role_id === newTask.role_id);
+      for (const u of relevantUsers) {
+        const exists = this.progress.some((p) => p.user_id === u.id && p.task_id === newTask.id);
+        if (!exists) {
+          this.progress.push({
+            id: generateUUID(),
+            user_id: u.id,
+            task_id: newTask.id,
+            is_completed: false,
+            answer_text: null,
+            completed_at: null,
+            created_at: new Date().toISOString(),
+          });
+        }
       }
     }
 
@@ -623,6 +672,32 @@ class DBService {
             this.notify();
           }
           return data as Task;
+        } else if (error) {
+          console.warn('Supabase updateTask error:', error);
+          if (error.code === 'PGRST204') {
+            const { hide_from_backpack, is_standalone_media, ...basicUpdate } = cleanUpdate;
+            if (Object.keys(basicUpdate).length > 0) {
+              const retryRes = await supabase
+                .from('tasks')
+                .update(basicUpdate)
+                .eq('id', id)
+                .select()
+                .single();
+              if (!retryRes.error && retryRes.data) {
+                const idx = this.tasks.findIndex((t) => t.id === id);
+                if (idx !== -1) {
+                  this.tasks[idx] = {
+                    ...retryRes.data,
+                    hide_from_backpack: cleanUpdate.hide_from_backpack !== undefined ? cleanUpdate.hide_from_backpack : this.tasks[idx].hide_from_backpack,
+                    is_standalone_media: cleanUpdate.is_standalone_media !== undefined ? cleanUpdate.is_standalone_media : this.tasks[idx].is_standalone_media,
+                  } as Task;
+                  this.saveAll();
+                  this.notify();
+                }
+                return this.tasks[idx];
+              }
+            }
+          }
         }
       } catch (e) {
         console.warn('Supabase updateTask error, fallback to local', e);
@@ -636,6 +711,61 @@ class DBService {
     this.saveAll();
     this.notify();
     return this.tasks[idx];
+  }
+
+  public async syncLocalTasksToSupabase(): Promise<{ total: number; synced: number; errors: string[] }> {
+    if (!isSupabaseConfigured || !supabase) {
+      return { total: 0, synced: 0, errors: ['Supabase אינו מוגדר'] };
+    }
+
+    let synced = 0;
+    const errors: string[] = [];
+
+    for (const task of this.tasks) {
+      try {
+        const { error } = await supabase.from('tasks').upsert({
+          id: task.id,
+          role_id: task.role_id,
+          step_order: task.step_order,
+          title: task.title,
+          description: task.description || '',
+          type: task.type,
+          media_url: task.media_url || null,
+          question_prompt: task.question_prompt || null,
+          hide_from_backpack: Boolean(task.hide_from_backpack),
+          is_standalone_media: Boolean(task.is_standalone_media),
+        });
+
+        if (error) {
+          // If columns don't exist yet, retry with standard columns
+          if (error.code === 'PGRST204') {
+            const { error: retryError } = await supabase.from('tasks').upsert({
+              id: task.id,
+              role_id: task.role_id,
+              step_order: task.step_order,
+              title: task.title,
+              description: task.description || '',
+              type: task.type,
+              media_url: task.media_url || null,
+              question_prompt: task.question_prompt || null,
+            });
+            if (retryError) {
+              errors.push(`משימה "${task.title}": ${retryError.message}`);
+            } else {
+              synced++;
+            }
+          } else {
+            errors.push(`משימה "${task.title}": ${error.message}`);
+          }
+        } else {
+          synced++;
+        }
+      } catch (err: any) {
+        errors.push(`משימה "${task.title}": ${err.message || 'שגיאה לא ידועה'}`);
+      }
+    }
+
+    return { total: this.tasks.length, synced, errors };
   }
 
   async deleteTask(id: string): Promise<boolean> {
@@ -943,8 +1073,13 @@ class DBService {
   async createBackpackResource(
     resourceData: Omit<BackpackResource, 'id' | 'created_at'>
   ): Promise<BackpackResource> {
+    const mediaUrl = resourceData.media_url?.trim() || resourceData.file_url?.trim() || resourceData.external_link?.trim() || null;
     const newResource: BackpackResource = {
       ...resourceData,
+      category: resourceData.category || 'כללי',
+      media_url: mediaUrl,
+      file_url: resourceData.file_url || mediaUrl,
+      external_link: resourceData.external_link || mediaUrl,
       id: generateUUID(),
       created_at: new Date().toISOString(),
     };
@@ -973,11 +1108,24 @@ class DBService {
     id: string,
     updateData: Partial<BackpackResource>
   ): Promise<BackpackResource | null> {
+    const mediaUrl = updateData.media_url !== undefined
+      ? (updateData.media_url?.trim() || null)
+      : (updateData.file_url || updateData.external_link || undefined);
+
+    const cleanUpdate: Partial<BackpackResource> = {
+      ...updateData,
+    };
+    if (mediaUrl !== undefined) {
+      cleanUpdate.media_url = mediaUrl;
+      cleanUpdate.file_url = updateData.file_url || mediaUrl;
+      cleanUpdate.external_link = updateData.external_link || mediaUrl;
+    }
+
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase
           .from('backpack_resources')
-          .update(updateData)
+          .update(cleanUpdate)
           .eq('id', id)
           .select()
           .single();
@@ -998,7 +1146,7 @@ class DBService {
     const idx = this.backpack.findIndex((r) => r.id === id);
     if (idx === -1) return null;
 
-    this.backpack[idx] = { ...this.backpack[idx], ...updateData };
+    this.backpack[idx] = { ...this.backpack[idx], ...cleanUpdate };
     this.saveAll();
     this.notify();
     return this.backpack[idx];
@@ -1159,7 +1307,7 @@ class DBService {
 
       const role = roles.find((r) => r.id === user.role_id);
       const userTasks = allTasks
-        .filter((t) => t.role_id === user.role_id)
+        .filter((t) => t.role_id === user.role_id && !t.is_standalone_media)
         .sort((a, b) => a.step_order - b.step_order);
       
       const userProgress = allProgress.filter((p) => p.user_id === user.id);

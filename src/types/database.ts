@@ -36,6 +36,8 @@ export interface Task {
   type: TaskType;
   media_url?: string | null;
   question_prompt?: string | null;
+  hide_from_backpack?: boolean;
+  is_standalone_media?: boolean;
   created_at?: string;
 }
 
@@ -52,8 +54,9 @@ export interface UserTaskProgress {
 export interface BackpackResource {
   id: string;
   title: string;
-  category: string;
+  category?: string;
   description: string;
+  media_url?: string | null;
   file_url?: string | null;
   external_link?: string | null;
   created_at?: string;
