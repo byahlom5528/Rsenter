@@ -4,16 +4,13 @@ import {
   Search, 
   User, 
   X, 
-  ListTree,
-  GitFork,
-  ChevronLeft,
-  ChevronDown,
-  Sparkles,
-  Zap,
-  Filter,
-  ChevronsDown,
-  ChevronsUp,
-  Info
+  ListTree, 
+  GitFork, 
+  ChevronLeft, 
+  ChevronDown, 
+  Sparkles, 
+  Zap, 
+  Info 
 } from 'lucide-react';
 import { OrgNode } from '../types/database';
 import { db } from '../services/db';
@@ -33,14 +30,20 @@ export const OrgTreePage: React.FC = () => {
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
   const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [highlightOnlyMyInterfaces, setHighlightOnlyMyInterfaces] = useState(false);
   
-  // High-performance Auto-Scale State (Zero-lag, strictly non-looping)
+  // High-performance Auto-Scale State
   const [scale, setScale] = useState(1);
   const [containerHeight, setContainerHeight] = useState<number | null>(null);
+  const [isZoomedIn, setIsZoomedIn] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
+
+  // Pinch-to-zoom refs (Gesture-only on mobile, no dedicated buttons)
+  const baseScaleRef = useRef<number>(1);
+  const scaleRef = useRef<number>(1);
+  const pinchStartDistRef = useRef<number | null>(null);
+  const pinchStartScaleRef = useRef<number>(1);
 
   const loadOrgData = async () => {
     try {
@@ -82,24 +85,12 @@ export const OrgTreePage: React.FC = () => {
     setCollapsedNodes((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleExpandAll = () => {
-    setCollapsedNodes({});
-  };
-
-  const handleCollapseAll = () => {
-    const map: Record<string, boolean> = {};
-    nodes.forEach((n) => {
-      map[n.id] = true;
-    });
-    setCollapsedNodes(map);
-  };
-
   const handleSelectNode = (node: OrgNode) => {
     setSelectedNode(node);
     setIsDrawerOpen(true);
   };
 
-  // High-performance scale calculator: Runs at most once per frame on window resize only (NO recursive loops!)
+  // High-performance scale calculator: Runs on window resize only
   const calculateScale = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
@@ -110,7 +101,10 @@ export const OrgTreePage: React.FC = () => {
 
         if (containerW > 0 && unscaledW > 0) {
           const newScale = Math.min(1, Number((containerW / unscaledW).toFixed(3)));
+          baseScaleRef.current = newScale;
+          scaleRef.current = newScale;
           setScale(newScale);
+          setIsZoomedIn(false);
           setContainerHeight(Math.ceil(unscaledH * newScale) + 16);
         }
       }
@@ -134,6 +128,84 @@ export const OrgTreePage: React.FC = () => {
       };
     }
   }, [isLoading, nodes.length, collapsedNodes, viewMode, calculateScale]);
+
+  // Native touch gesture listener for pinch-to-zoom on mobile (NO dedicated buttons)
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let lastTapTime = 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        // Start 2-finger pinch
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        pinchStartDistRef.current = dist;
+        pinchStartScaleRef.current = scaleRef.current;
+      } else if (e.touches.length === 1) {
+        // Check for double-tap to reset zoom
+        const now = Date.now();
+        if (now - lastTapTime < 320) {
+          const base = baseScaleRef.current;
+          scaleRef.current = base;
+          setScale(base);
+          setIsZoomedIn(false);
+          if (contentRef.current) {
+            setContainerHeight(Math.ceil(contentRef.current.scrollHeight * base) + 16);
+          }
+          lastTapTime = 0;
+          return;
+        }
+        lastTapTime = now;
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && pinchStartDistRef.current !== null) {
+        e.preventDefault(); // Prevent full browser viewport zooming
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        if (pinchStartDistRef.current > 0) {
+          const factor = dist / pinchStartDistRef.current;
+          const minScale = Math.max(0.18, baseScaleRef.current * 0.85);
+          const maxScale = 2.6;
+          const targetScale = Math.min(maxScale, Math.max(minScale, pinchStartScaleRef.current * factor));
+          const roundedScale = Number(targetScale.toFixed(3));
+
+          scaleRef.current = roundedScale;
+          setScale(roundedScale);
+          setIsZoomedIn(roundedScale > baseScaleRef.current * 1.05);
+
+          if (contentRef.current) {
+            setContainerHeight(Math.ceil(contentRef.current.scrollHeight * roundedScale) + 16);
+          }
+        }
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        pinchStartDistRef.current = null;
+      }
+    };
+
+    container.addEventListener('touchstart', onTouchStart, { passive: true });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd, { passive: true });
+    container.addEventListener('touchcancel', onTouchEnd, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', onTouchStart);
+      container.removeEventListener('touchmove', onTouchMove);
+      container.removeEventListener('touchend', onTouchEnd);
+      container.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, []);
 
   // Memoized cycle-safe tree builder
   const treeData = useMemo(() => {
@@ -202,11 +274,14 @@ export const OrgTreePage: React.FC = () => {
     return nodes.filter((n) => n.parent_id === selectedNode.id);
   }, [selectedNode, nodes]);
 
-  // Match and Dimming helper
-  const getNodeVisualState = (node: OrgNode) => {
+  /* ========================================================================= */
+  /* CLASSIC REGULAR TREE RENDERING (ENLARGED TYPOGRAPHY, CLEAN MINIMALIST)   */
+  /* ========================================================================= */
+
+  const renderRegularTreeNode = (node: TreeNode, level: number = 1) => {
     const isSelected = selectedNode?.id === node.id;
-    const nodeRelative = nodeInterfacesMap.get(node.id) || getSimplifiedRoleInterface(currentRole, node);
-    const isDirectInterface = nodeRelative.relationshipBadge.includes('ממשק') || nodeRelative.relationshipBadge.includes('פיקוד') || nodeRelative.isMyNode;
+    const hasChildren = node.children && node.children.length > 0;
+    const isCollapsed = collapsedNodes[node.id];
 
     const isMatch = searchTerm.trim() !== '' && (
       node.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -214,109 +289,51 @@ export const OrgTreePage: React.FC = () => {
       node.description.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    const isDimmed = highlightOnlyMyInterfaces && !isDirectInterface;
-
-    return { isSelected, nodeRelative, isDirectInterface, isMatch, isDimmed };
-  };
-
-  /* ========================================================================= */
-  /* CLASSIC REGULAR TREE RENDERING (FIXED DIAGRAM, ULTRA FAST)               */
-  /* ========================================================================= */
-
-  const renderRegularTreeNode = (node: TreeNode, level: number = 1) => {
-    const { isSelected, nodeRelative, isMatch, isDimmed } = getNodeVisualState(node);
-    const hasChildren = node.children && node.children.length > 0;
-    const isCollapsed = collapsedNodes[node.id];
-
-    // Card width classes: balanced proportions
+    // Balanced width per tier giving ample room for enlarged font
     const cardWidthClass = 
       level === 1 
-        ? 'w-44 sm:w-50 md:w-54' 
+        ? 'w-44 sm:w-52 md:w-56' 
         : level === 2 
-        ? 'w-30 sm:w-34 md:w-38' 
-        : 'w-26 sm:w-30 md:w-32';
+        ? 'w-32 sm:w-36 md:w-40' 
+        : 'w-28 sm:w-32 md:w-34';
 
     return (
       <div key={node.id} className="flex flex-col items-center select-none">
         
-        {/* Node Card */}
+        {/* Node Card - Only Role Title & Holder Name with enlarged typography */}
         <div
           onClick={() => handleSelectNode(node)}
-          className={`node-card cursor-pointer ${cardWidthClass} p-2 sm:p-2.5 rounded-xl sm:rounded-2xl border-2 transition-all duration-150 text-right relative shadow-2xs ${
+          className={`node-card cursor-pointer ${cardWidthClass} py-2.5 px-2 rounded-xl border-2 transition-all duration-150 text-center relative shadow-2xs ${
             isSelected
               ? 'bg-white border-brand-600 shadow-xl ring-3 ring-brand-500/30 scale-105 z-20'
               : level === 1
-              ? 'bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white border-slate-700 hover:border-indigo-400 z-10'
-              : nodeRelative.isMyNode
-              ? 'bg-brand-50/95 border-brand-500 shadow-xs ring-2 ring-brand-400 z-10'
+              ? 'bg-slate-900 text-white border-slate-700 hover:border-indigo-400 z-10'
               : isMatch
               ? 'bg-amber-50 border-amber-400 shadow-xs ring-2 ring-amber-300 z-10'
               : 'bg-white border-slate-200 hover:border-brand-300 hover:shadow-md z-10'
-          } ${isDimmed ? 'opacity-35 grayscale-[60%]' : 'opacity-100'}`}
+          }`}
         >
-          {/* Level Badge + Collapse Toggle */}
-          <div className="flex items-center justify-between gap-1 mb-1">
-            <span className={`text-[8.5px] sm:text-[9.5px] font-bold px-1.5 py-0.2 rounded-full truncate ${
-              level === 1
-                ? 'bg-amber-400/25 text-amber-300 border border-amber-400/30'
-                : level === 2
-                ? 'bg-indigo-50 text-indigo-800 border border-indigo-200/70'
-                : 'bg-slate-100 text-slate-700'
-            }`}>
-              {level === 1 ? '👑 מפקד' : level === 2 ? 'ראש ענף' : 'מדור'}
-            </span>
-
-            {hasChildren && (
-              <button
-                type="button"
-                onClick={(e) => toggleCollapse(node.id, e)}
-                className={`w-4 h-4 rounded text-[9px] font-bold flex items-center justify-center transition-colors ${
-                  level === 1 && !isSelected
-                    ? 'bg-white/15 hover:bg-white/25 text-white'
-                    : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                }`}
-                title={isCollapsed ? 'פתח כפיפים' : 'כווץ כפיפים'}
-              >
-                {isCollapsed ? '+' : '−'}
-              </button>
-            )}
-          </div>
-
-          {/* Relationship Badge with Current Role */}
-          {currentRole && (
-            <div className="mb-1">
-              <span className={`inline-block text-[8px] sm:text-[8.5px] font-extrabold px-1.5 py-0.2 rounded border truncate max-w-full ${
-                level === 1 && !isSelected ? 'bg-white/10 text-white border-white/20' : nodeRelative.relationshipColor
-              }`}>
-                {nodeRelative.relationshipBadge}
-              </span>
-            </div>
-          )}
-
-          {/* Role Title */}
-          <h4 className={`font-black text-xs sm:text-[13px] leading-snug mb-0.5 truncate ${
-            level === 1 && !isSelected ? 'text-white' : 'text-slate-900'
+          {/* 1. שם התפקיד - כתב מוגדל ובולט */}
+          <h4 className={`font-black tracking-tight leading-snug truncate ${
+            level === 1 
+              ? 'text-sm sm:text-base md:text-lg text-white' 
+              : level === 2 
+              ? 'text-[13px] sm:text-sm md:text-[15px] text-slate-900' 
+              : 'text-xs sm:text-[13px] md:text-sm text-slate-900'
           }`}>
             {node.title}
           </h4>
 
-          {/* Holder Name */}
-          <div className={`flex items-center gap-1 text-[10px] sm:text-[11px] truncate ${
-            level === 1 && !isSelected ? 'text-slate-300' : 'text-slate-600'
+          {/* 2. שם מאייש - כתב מוגדל, קריא וברור */}
+          <div className={`font-semibold truncate mt-0.5 ${
+            level === 1 
+              ? 'text-xs sm:text-sm text-slate-300' 
+              : level === 2 
+              ? 'text-[11.5px] sm:text-xs text-slate-600' 
+              : 'text-[10.5px] sm:text-[11.5px] text-slate-600'
           }`}>
-            <User className="w-2.5 h-2.5 shrink-0 text-brand-600" />
-            <span className="truncate font-semibold">{node.holder_name}</span>
+            {node.holder_name}
           </div>
-
-          {/* Subordinates count / Action hint */}
-          {hasChildren && (
-            <div className={`mt-1 pt-1 border-t text-[8.5px] sm:text-[9px] flex items-center justify-between ${
-              level === 1 && !isSelected ? 'border-white/10 text-slate-400' : 'border-slate-100 text-slate-400'
-            }`}>
-              <span>{node.children.length} כפיפים</span>
-              <span className="text-brand-600 font-bold">ממשק ➔</span>
-            </div>
-          )}
         </div>
 
         {/* Children Branching with Connecting Lines */}
@@ -366,9 +383,10 @@ export const OrgTreePage: React.FC = () => {
   /* ========================================================================= */
 
   const renderListItem = (node: TreeNode, depth: number = 0) => {
-    const { isSelected, nodeRelative } = getNodeVisualState(node);
+    const isSelected = selectedNode?.id === node.id;
     const hasChildren = node.children && node.children.length > 0;
     const isCollapsed = collapsedNodes[node.id];
+    const nodeRelative = nodeInterfacesMap.get(node.id) || getSimplifiedRoleInterface(currentRole, node);
 
     return (
       <div key={node.id} className="w-full">
@@ -434,7 +452,7 @@ export const OrgTreePage: React.FC = () => {
         <div className="relative z-10 max-w-3xl">
           <div className="inline-flex items-center gap-1.5 bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 text-[11px] sm:text-xs font-semibold px-2.5 py-0.5 rounded-full mb-1.5">
             <Network className="w-3.5 h-3.5" />
-            <span>תרשים מבנה יחידתי קבוע מותאם למסך</span>
+            <span>מבנה ארגוני יחידתי</span>
           </div>
 
           <h1 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight text-white mb-1">
@@ -443,16 +461,16 @@ export const OrgTreePage: React.FC = () => {
           <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
             {currentRole ? (
               <span>
-                מבנה יחידתי מלא בתצוגה קבועה וקלה. ממשקי העבודה מוצגים <strong>ביחס לתפקידך: {currentRole.name}</strong>.
+                מבנה יחידתי מלא בתצוגה קבועה ונקייה. ממשקי העבודה מוצגים <strong>ביחס לתפקידך: {currentRole.name}</strong>.
               </span>
             ) : (
-              'עץ מבנה יחידתי מלא בתצוגה קבועה המותאמת במלואה לרוחב המסך במחשב ובנייד.'
+              'עץ מבנה יחידתי בתצוגה קבועה ונקייה המותאמת במלואה לרוחב המסך במחשב ובנייד.'
             )}
           </p>
         </div>
       </div>
 
-      {/* Action Controls Bar */}
+      {/* Clean Top Action Bar (Without expand/collapse or highlight buttons) */}
       <div className="sticky top-14 md:top-16 z-30 bg-slate-50/95 backdrop-blur-md py-2 -mx-3 px-3 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 border-b border-slate-200/80 shadow-2xs flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
         
         {/* Search Bar */}
@@ -475,78 +493,37 @@ export const OrgTreePage: React.FC = () => {
           )}
         </div>
 
-        {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-1.5 justify-between sm:justify-end">
-          
-          {/* Highlight My Interfaces Filter Toggle */}
-          {currentRole && (
-            <button
-              onClick={() => setHighlightOnlyMyInterfaces(!highlightOnlyMyInterfaces)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-all ${
-                highlightOnlyMyInterfaces
-                  ? 'bg-indigo-600 text-white border-indigo-700 shadow-2xs'
-                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              <Filter className="w-3.5 h-3.5" />
-              <span>הדגש שלי</span>
-            </button>
-          )}
+        {/* View Mode Toggle: Tree vs List */}
+        <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-xl self-end sm:self-auto">
+          <button
+            onClick={() => setViewMode('tree')}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              viewMode === 'tree' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+            title="עץ מבנה"
+          >
+            <GitFork className="w-3.5 h-3.5 text-brand-600" />
+            <span>עץ</span>
+          </button>
 
-          {/* Expand/Collapse All Buttons */}
-          <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-0.5 shadow-2xs text-xs">
-            <button
-              onClick={handleExpandAll}
-              className="flex items-center gap-1 px-2 py-1 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-colors font-semibold text-[11px]"
-              title="פתח את כל הענפים"
-            >
-              <ChevronsDown className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">פתח הכל</span>
-            </button>
-            <div className="w-px h-3 bg-slate-200"></div>
-            <button
-              onClick={handleCollapseAll}
-              className="flex items-center gap-1 px-2 py-1 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-50 transition-colors font-semibold text-[11px]"
-              title="כווץ את כל הענפים"
-            >
-              <ChevronsUp className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">כווץ הכל</span>
-            </button>
-          </div>
-
-          {/* View Mode Toggle: Fixed Tree Image vs List */}
-          <div className="flex items-center gap-1 bg-slate-200/80 p-0.5 rounded-xl">
-            <button
-              onClick={() => setViewMode('tree')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'tree' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-              title="עץ מבנה קלאסי"
-            >
-              <GitFork className="w-3.5 h-3.5 text-brand-600" />
-              <span>עץ</span>
-            </button>
-
-            <button
-              onClick={() => setViewMode('list')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
-                viewMode === 'list' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-              title="רשימה היררכית"
-            >
-              <ListTree className="w-3.5 h-3.5" />
-              <span>רשימה</span>
-            </button>
-          </div>
-
+          <button
+            onClick={() => setViewMode('list')}
+            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              viewMode === 'list' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+            }`}
+            title="רשימה"
+          >
+            <ListTree className="w-3.5 h-3.5" />
+            <span>רשימה</span>
+          </button>
         </div>
 
       </div>
 
-      {/* Click Hint */}
+      {/* Helpful Click & Gesture Hint */}
       <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50/80 border border-indigo-200/60 rounded-xl text-[11px] text-indigo-900 font-medium w-fit mr-auto">
         <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-        <span>לחץ על כל תפקיד בעץ לצפייה בממשק העבודה המלא ובהגדרת התפקיד</span>
+        <span>לחץ על תפקיד לצפייה בממשק המלא • במובייל ניתן לצבוט בשתי אצבעות לזום פנימה/החוצה</span>
       </div>
 
       {/* Main Container */}
@@ -559,16 +536,18 @@ export const OrgTreePage: React.FC = () => {
         
         /* 
            FIXED IMAGE-LIKE TREE CONTAINER:
-           - Works smoothly as a fixed image
-           - Zero recursive observers: never loops, 0% CPU consumption
-           - Native touchAction pan-y for immediate touch response on mobile
+           - Fits 100% within container width like an image
+           - Enlarged font typography
+           - Supports native 2-finger pinch-to-zoom on mobile (NO dedicated buttons!)
         */
         <div 
           ref={containerRef}
-          className="w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-2 sm:p-4 shadow-2xs relative overflow-hidden flex flex-col items-center justify-start"
+          className={`w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-2 sm:p-4 shadow-2xs relative flex flex-col items-center justify-start ${
+            isZoomedIn ? 'overflow-x-auto overflow-y-visible custom-scrollbar' : 'overflow-hidden'
+          }`}
           style={{
             height: containerHeight ? `${containerHeight}px` : 'auto',
-            touchAction: 'pan-y'
+            touchAction: isZoomedIn ? 'auto' : 'pan-y'
           }}
         >
           <div 
