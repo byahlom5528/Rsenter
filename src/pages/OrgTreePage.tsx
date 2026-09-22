@@ -10,7 +10,12 @@ import {
   ChevronDown, 
   Sparkles, 
   Zap, 
-  Info 
+  Info,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Move,
+  Maximize2
 } from 'lucide-react';
 import { OrgNode } from '../types/database';
 import { db } from '../services/db';
@@ -31,28 +36,34 @@ export const OrgTreePage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   
-  // High-performance Auto-Scale State
-  const [scale, setScale] = useState(1);
+  // Pan & Zoom and Auto-Fit State
+  const [scale, setScale] = useState<number>(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState<boolean>(false);
   const [containerHeight, setContainerHeight] = useState<number | null>(null);
-  const [isZoomedIn, setIsZoomedIn] = useState(false);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number | null>(null);
 
-  // Pinch-to-zoom refs (Gesture-only on mobile, no dedicated buttons)
   const baseScaleRef = useRef<number>(1);
   const scaleRef = useRef<number>(1);
-  const pinchStartDistRef = useRef<number | null>(null);
+  scaleRef.current = scale;
+  const panRef = useRef<{ x: number; y: number }>(pan);
+  panRef.current = pan;
+
+  const isDraggingRef = useRef<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const panStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const hasMovedRef = useRef<boolean>(false);
+
+  // Touch gesture refs
+  const pinchDistRef = useRef<number | null>(null);
   const pinchStartScaleRef = useRef<number>(1);
 
   const loadOrgData = async () => {
     try {
       const data = await db.getOrgNodes();
       setNodes(data);
-      if (data.length > 0 && !selectedNode) {
-        const root = data.find((n) => !n.parent_id) || data[0];
-        setSelectedNode(root);
-      }
     } catch (err) {
       console.error('Failed to load org tree nodes', err);
     } finally {
@@ -65,7 +76,6 @@ export const OrgTreePage: React.FC = () => {
     const unsubscribe = db.subscribe(loadOrgData);
     return () => {
       unsubscribe();
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, []);
 
@@ -90,122 +100,193 @@ export const OrgTreePage: React.FC = () => {
     setIsDrawerOpen(true);
   };
 
-  // High-performance scale calculator: Runs on window resize only
-  const calculateScale = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => {
-      if (containerRef.current && contentRef.current) {
-        const containerW = containerRef.current.clientWidth - 16;
-        const unscaledW = contentRef.current.scrollWidth;
-        const unscaledH = contentRef.current.scrollHeight;
+  // High-performance Auto-Fit calculation: ensures the full tree is visible by default
+  const calculateBaseScale = useCallback(() => {
+    if (containerRef.current && contentRef.current) {
+      const containerW = containerRef.current.clientWidth - 24;
+      const unscaledW = contentRef.current.scrollWidth;
+      const unscaledH = contentRef.current.scrollHeight;
 
-        if (containerW > 0 && unscaledW > 0) {
-          const newScale = Math.min(1, Number((containerW / unscaledW).toFixed(3)));
-          baseScaleRef.current = newScale;
-          scaleRef.current = newScale;
-          setScale(newScale);
-          setIsZoomedIn(false);
-          setContainerHeight(Math.ceil(unscaledH * newScale) + 16);
-        }
+      if (containerW > 0 && unscaledW > 0) {
+        const fitScale = Math.min(1, Number((containerW / unscaledW).toFixed(3)));
+        baseScaleRef.current = fitScale;
+        scaleRef.current = fitScale;
+        setScale(fitScale);
+        setPan({ x: 0, y: 0 });
+        panRef.current = { x: 0, y: 0 };
+        setContainerHeight(Math.ceil(unscaledH * fitScale) + 32);
       }
+    }
+  }, []);
+
+  // Zoom controls
+  const zoomIn = useCallback(() => {
+    setScale((s) => {
+      const next = Math.min(2.5, Number((s + 0.15).toFixed(2)));
+      scaleRef.current = next;
+      return next;
     });
   }, []);
 
-  // Safe window-only resize listener (Will NEVER cause infinite loops on mobile or desktop)
+  const zoomOut = useCallback(() => {
+    setScale((s) => {
+      const next = Math.max(0.2, Number((s - 0.15).toFixed(2)));
+      scaleRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const resetToFullView = useCallback(() => {
+    calculateBaseScale();
+  }, [calculateBaseScale]);
+
+  // Run auto-fit on load and on window resize
   useEffect(() => {
     if (!isLoading && nodes.length > 0 && viewMode === 'tree') {
-      calculateScale();
-      const timer = setTimeout(calculateScale, 60);
+      calculateBaseScale();
+      const timer = setTimeout(calculateBaseScale, 60);
+      const timer2 = setTimeout(calculateBaseScale, 200);
 
-      window.addEventListener('resize', calculateScale);
-      window.addEventListener('orientationchange', calculateScale);
+      window.addEventListener('resize', calculateBaseScale);
+      window.addEventListener('orientationchange', calculateBaseScale);
 
       return () => {
         clearTimeout(timer);
-        window.removeEventListener('resize', calculateScale);
-        window.removeEventListener('orientationchange', calculateScale);
-        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        clearTimeout(timer2);
+        window.removeEventListener('resize', calculateBaseScale);
+        window.removeEventListener('orientationchange', calculateBaseScale);
       };
     }
-  }, [isLoading, nodes.length, collapsedNodes, viewMode, calculateScale]);
+  }, [isLoading, nodes.length, viewMode, calculateBaseScale]);
 
-  // Native touch gesture listener for pinch-to-zoom on mobile (NO dedicated buttons)
+  // Global mouse drag listeners for free panning in all directions
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only left-click
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    hasMovedRef.current = false;
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    panStartRef.current = { ...panRef.current };
+  };
+
   useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        hasMovedRef.current = true;
+      }
+      const newPan = {
+        x: panStartRef.current.x + dx,
+        y: panStartRef.current.y + dy,
+      };
+      panRef.current = newPan;
+      setPan(newPan);
+    };
+
+    const handleMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        setIsDragging(false);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
+
+  // Mouse wheel zoom & touch gestures for mobile (attached when tree container renders)
+  useEffect(() => {
+    if (isLoading || viewMode !== 'tree') return;
     const container = containerRef.current;
     if (!container) return;
 
-    let lastTapTime = 0;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomDelta = e.deltaY < 0 ? 1.08 : 0.92;
+      setScale((prevScale) => {
+        const nextScale = Math.min(2.5, Math.max(0.2, Number((prevScale * zoomDelta).toFixed(3))));
+        scaleRef.current = nextScale;
+        return nextScale;
+      });
+    };
 
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        // Start 2-finger pinch
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        isDraggingRef.current = true;
+        setIsDragging(true);
+        hasMovedRef.current = false;
+        dragStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        panStartRef.current = { ...panRef.current };
+      } else if (e.touches.length === 2) {
+        isDraggingRef.current = false;
+        setIsDragging(false);
         const dist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        pinchStartDistRef.current = dist;
+        pinchDistRef.current = dist;
         pinchStartScaleRef.current = scaleRef.current;
-      } else if (e.touches.length === 1) {
-        // Check for double-tap to reset zoom
-        const now = Date.now();
-        if (now - lastTapTime < 320) {
-          const base = baseScaleRef.current;
-          scaleRef.current = base;
-          setScale(base);
-          setIsZoomedIn(false);
-          if (contentRef.current) {
-            setContainerHeight(Math.ceil(contentRef.current.scrollHeight * base) + 16);
-          }
-          lastTapTime = 0;
-          return;
-        }
-        lastTapTime = now;
       }
     };
 
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 2 && pinchStartDistRef.current !== null) {
-        e.preventDefault(); // Prevent full browser viewport zooming
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1 && isDraggingRef.current) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - dragStartRef.current.x;
+        const dy = e.touches[0].clientY - dragStartRef.current.y;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+          hasMovedRef.current = true;
+        }
+        const newPan = {
+          x: panStartRef.current.x + dx,
+          y: panStartRef.current.y + dy,
+        };
+        panRef.current = newPan;
+        setPan(newPan);
+      } else if (e.touches.length === 2 && pinchDistRef.current !== null) {
+        e.preventDefault();
         const dist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
-        if (pinchStartDistRef.current > 0) {
-          const factor = dist / pinchStartDistRef.current;
-          const minScale = Math.max(0.18, baseScaleRef.current * 0.85);
-          const maxScale = 2.6;
-          const targetScale = Math.min(maxScale, Math.max(minScale, pinchStartScaleRef.current * factor));
-          const roundedScale = Number(targetScale.toFixed(3));
-
-          scaleRef.current = roundedScale;
-          setScale(roundedScale);
-          setIsZoomedIn(roundedScale > baseScaleRef.current * 1.05);
-
-          if (contentRef.current) {
-            setContainerHeight(Math.ceil(contentRef.current.scrollHeight * roundedScale) + 16);
-          }
+        if (pinchDistRef.current > 0) {
+          const factor = dist / pinchDistRef.current;
+          const nextScale = Math.min(
+            2.5,
+            Math.max(0.2, Number((pinchStartScaleRef.current * factor).toFixed(3)))
+          );
+          scaleRef.current = nextScale;
+          setScale(nextScale);
         }
       }
     };
 
-    const onTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) {
-        pinchStartDistRef.current = null;
-      }
+    const handleTouchEnd = () => {
+      isDraggingRef.current = false;
+      setIsDragging(false);
+      pinchDistRef.current = null;
     };
 
-    container.addEventListener('touchstart', onTouchStart, { passive: true });
-    container.addEventListener('touchmove', onTouchMove, { passive: false });
-    container.addEventListener('touchend', onTouchEnd, { passive: true });
-    container.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+    container.addEventListener('touchcancel', handleTouchEnd, { passive: true });
 
     return () => {
-      container.removeEventListener('touchstart', onTouchStart);
-      container.removeEventListener('touchmove', onTouchMove);
-      container.removeEventListener('touchend', onTouchEnd);
-      container.removeEventListener('touchcancel', onTouchEnd);
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchEnd);
     };
-  }, []);
+  }, [isLoading, viewMode]);
 
   // Memoized cycle-safe tree builder
   const treeData = useMemo(() => {
@@ -289,7 +370,7 @@ export const OrgTreePage: React.FC = () => {
       node.description.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    // Balanced width per tier giving ample room for enlarged font
+    // Original balanced width per tier ensuring the full tree fits naturally on screen
     const cardWidthClass = 
       level === 1 
         ? 'w-44 sm:w-52 md:w-56' 
@@ -300,9 +381,13 @@ export const OrgTreePage: React.FC = () => {
     return (
       <div key={node.id} className="flex flex-col items-center select-none">
         
-        {/* Node Card - Only Role Title & Holder Name with enlarged typography */}
+        {/* Node Card */}
         <div
-          onClick={() => handleSelectNode(node)}
+          onClick={() => {
+            if (!hasMovedRef.current) {
+              handleSelectNode(node);
+            }
+          }}
           className={`node-card cursor-pointer ${cardWidthClass} py-2.5 px-2 rounded-xl border-2 transition-all duration-150 text-center relative shadow-2xs ${
             isSelected
               ? 'bg-white border-brand-600 shadow-xl ring-3 ring-brand-500/30 scale-105 z-20'
@@ -313,7 +398,7 @@ export const OrgTreePage: React.FC = () => {
               : 'bg-white border-slate-200 hover:border-brand-300 hover:shadow-md z-10'
           }`}
         >
-          {/* 1. שם התפקיד - כתב מוגדל ובולט */}
+          {/* 1. שם התפקיד */}
           <h4 className={`font-black tracking-tight leading-snug truncate ${
             level === 1 
               ? 'text-sm sm:text-base md:text-lg text-white' 
@@ -324,7 +409,7 @@ export const OrgTreePage: React.FC = () => {
             {node.title}
           </h4>
 
-          {/* 2. שם מאייש - כתב מוגדל, קריא וברור */}
+          {/* 2. שם מאייש */}
           <div className={`font-semibold truncate mt-0.5 ${
             level === 1 
               ? 'text-xs sm:text-sm text-slate-300' 
@@ -520,10 +605,12 @@ export const OrgTreePage: React.FC = () => {
 
       </div>
 
-      {/* Helpful Click & Gesture Hint */}
-      <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50/80 border border-indigo-200/60 rounded-xl text-[11px] text-indigo-900 font-medium w-fit mr-auto">
-        <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-        <span>לחץ על תפקיד לצפייה בממשק המלא • במובייל ניתן לצבוט בשתי אצבעות לזום פנימה/החוצה</span>
+      {/* Helpful Hint */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-1.5 bg-indigo-50/80 border border-indigo-200/60 rounded-xl text-[11.5px] text-indigo-900 font-medium">
+        <div className="flex items-center gap-1.5">
+          <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+          <span>גרור עם העכבר/אצבע לכל הכיוונים • גלול עם הגלגלת או השתמש בכפתורי ה-Zoom • לחץ על תפקיד לצפייה בממשק</span>
+        </div>
       </div>
 
       {/* Main Container */}
@@ -535,28 +622,71 @@ export const OrgTreePage: React.FC = () => {
       ) : viewMode === 'tree' ? (
         
         /* 
-           FIXED IMAGE-LIKE TREE CONTAINER:
-           - Fits 100% within container width like an image
-           - Enlarged font typography
-           - Supports native 2-finger pinch-to-zoom on mobile (NO dedicated buttons!)
+           INTERACTIVE PAN & ZOOM CANVAS:
+           - Drag to move freely in any direction (X & Y)
+           - Mouse wheel cursor-centered zoom
+           - Touch pinch & pan gestures on mobile
+           - Floating toolbar with Zoom In / Out / Fit to Screen / Reset
         */
         <div 
           ref={containerRef}
-          className={`w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-2 sm:p-4 shadow-2xs relative flex flex-col items-center justify-start ${
-            isZoomedIn ? 'overflow-x-auto overflow-y-visible custom-scrollbar' : 'overflow-hidden'
-          }`}
+          onMouseDown={handleMouseDown}
+          className="w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-3 sm:p-4 shadow-2xs relative flex flex-col items-center justify-start overflow-hidden select-none cursor-grab active:cursor-grabbing"
           style={{
             height: containerHeight ? `${containerHeight}px` : 'auto',
-            touchAction: isZoomedIn ? 'auto' : 'pan-y'
+            minHeight: '380px',
+            touchAction: 'none'
           }}
         >
+          {/* Floating Pan & Zoom Controls Toolbar */}
+          <div 
+            className="absolute top-3 right-3 z-30 flex items-center gap-1 bg-white/95 backdrop-blur-md px-2 py-1 rounded-xl border border-slate-200 shadow-sm"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={zoomIn}
+              className="p-1 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 transition-colors"
+              title="זום פנימה (+)"
+            >
+              <ZoomIn className="w-4 h-4" />
+            </button>
+
+            <span className="text-xs font-bold text-slate-700 min-w-[36px] text-center select-none">
+              {Math.round(scale * 100)}%
+            </span>
+
+            <button
+              type="button"
+              onClick={zoomOut}
+              className="p-1 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 transition-colors"
+              title="זום החוצה (-)"
+            >
+              <ZoomOut className="w-4 h-4" />
+            </button>
+
+            <div className="w-px h-3.5 bg-slate-200 mx-0.5" />
+
+            <button
+              type="button"
+              onClick={resetToFullView}
+              className="flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 text-xs font-bold transition-colors"
+              title="אפס לתצוגה מלאה שרואים את כל העץ"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>תצוגה מלאה</span>
+            </button>
+          </div>
+
+          {/* Canvas Content */}
           <div 
             ref={contentRef}
             className="flex flex-col items-center origin-top select-none"
             style={{ 
-              transform: `scale(${scale})`,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
               transformOrigin: 'top center',
               width: 'max-content',
+              transition: isDragging ? 'none' : 'transform 0.1s ease-out',
               willChange: 'transform'
             }}
           >
