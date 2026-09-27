@@ -8,6 +8,7 @@ import {
   GitFork, 
   ChevronLeft, 
   ChevronDown, 
+  ChevronUp,
   Sparkles, 
   Zap, 
   Info,
@@ -15,12 +16,19 @@ import {
   ZoomOut,
   RotateCcw,
   Move,
-  Maximize2
+  Maximize2,
+  Briefcase,
+  CheckSquare,
+  HelpCircle
 } from 'lucide-react';
 import { OrgNode } from '../types/database';
 import { db } from '../services/db';
 import { useAuth } from '../context/AuthContext';
-import { getSimplifiedRoleInterface, SimplifiedRoleInterface } from '../services/interfaceMapping';
+import { 
+  getSimplifiedRoleInterface, 
+  SimplifiedRoleInterface, 
+  getNodeProfileDetails 
+} from '../services/interfaceMapping';
 
 interface TreeNode extends OrgNode {
   children: TreeNode[];
@@ -35,6 +43,7 @@ export const OrgTreePage: React.FC = () => {
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
   const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [openFaqIndices, setOpenFaqIndices] = useState<Record<number, boolean>>({ 0: true, 1: true });
   
   // Pan & Zoom and Auto-Fit State
   const [scale, setScale] = useState<number>(1);
@@ -97,7 +106,15 @@ export const OrgTreePage: React.FC = () => {
 
   const handleSelectNode = (node: OrgNode) => {
     setSelectedNode(node);
+    setOpenFaqIndices({ 0: true, 1: true });
     setIsDrawerOpen(true);
+  };
+
+  const toggleFaq = (index: number) => {
+    setOpenFaqIndices((prev) => ({
+      ...prev,
+      [index]: !prev[index]
+    }));
   };
 
   // High-performance Auto-Fit calculation: ensures the full tree is visible by default
@@ -342,6 +359,12 @@ export const OrgTreePage: React.FC = () => {
     if (!selectedNode) return null;
     return nodeInterfacesMap.get(selectedNode.id) || getSimplifiedRoleInterface(currentRole, selectedNode);
   }, [selectedNode, currentRole, nodeInterfacesMap]);
+
+  // Profile Details: Role definition, responsibilities, and 2 tailored FAQ questions
+  const profileDetails = useMemo(() => {
+    if (!selectedNode) return null;
+    return getNodeProfileDetails(selectedNode, currentRole);
+  }, [selectedNode, currentRole]);
 
   // Superior commander of selected node
   const parentOfSelected = useMemo(() => {
@@ -799,16 +822,109 @@ export const OrgTreePage: React.FC = () => {
               </div>
             </div>
 
-            {/* 2. הגדרת התפקיד ותחומי אחריות */}
+            {/* 2. הגדרת התפקיד (מופרדת) */}
             <div className="pt-2 border-t border-slate-100">
               <h4 className="text-xs font-black text-slate-900 uppercase mb-1.5 flex items-center gap-1.5">
-                <ListTree className="w-4 h-4 text-slate-700" />
-                <span>הגדרת תפקיד ותחומי אחריות</span>
+                <Briefcase className="w-4 h-4 text-brand-600" />
+                <span>הגדרת תפקיד</span>
               </h4>
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-700 leading-relaxed">
-                {selectedNode.description}
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 text-xs sm:text-sm text-slate-700 leading-relaxed font-normal">
+                {profileDetails?.roleDefinition || selectedNode.description}
               </div>
             </div>
+
+            {/* 3. תחומי אחריות (מופרדים עם סעיפים וסימונים ברורים) */}
+            {profileDetails && profileDetails.responsibilities.length > 0 && (
+              <div className="pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-black text-slate-900 uppercase flex items-center gap-1.5">
+                    <CheckSquare className="w-4 h-4 text-emerald-600" />
+                    <span>תחומי אחריות</span>
+                  </h4>
+                  <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
+                    {profileDetails.responsibilities.length} סעיפים
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {profileDetails.responsibilities.map((resp, idx) => (
+                    <div 
+                      key={idx} 
+                      className="p-2.5 bg-white rounded-xl border border-slate-200/80 hover:border-slate-300 transition-colors flex items-start gap-2.5 shadow-2xs"
+                    >
+                      <div className="w-5 h-5 rounded-md bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5 text-[11px] font-bold">
+                        ✓
+                      </div>
+                      <span className="text-xs text-slate-700 leading-relaxed font-normal">{resp}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 4. שאלות נפוצות (2 שאלות רלוונטיות לתפקיד) */}
+            {profileDetails && profileDetails.faqs.length > 0 && (
+              <div className="pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-black text-slate-900 uppercase flex items-center gap-1.5">
+                    <HelpCircle className="w-4 h-4 text-amber-500" />
+                    <span>שאלות נפוצות</span>
+                  </h4>
+                  <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                    {profileDetails.faqs.length} שאלות
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {profileDetails.faqs.map((faq, idx) => {
+                    const hasAnswer = Boolean(faq.answer && faq.answer.trim().length > 0);
+                    const isOpen = hasAnswer && (openFaqIndices[idx] ?? true);
+                    return (
+                      <div 
+                        key={idx} 
+                        className="rounded-2xl border border-amber-200/80 bg-gradient-to-br from-amber-50/40 via-white to-amber-50/20 overflow-hidden transition-all shadow-2xs"
+                      >
+                        {hasAnswer ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleFaq(idx)}
+                            className="w-full p-3 text-right flex items-center justify-between gap-2.5 hover:bg-amber-50/50 transition-colors cursor-pointer"
+                          >
+                            <div className="flex items-start gap-2">
+                              <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
+                                {idx + 1}
+                              </span>
+                              <span className="text-xs sm:text-[13px] font-bold text-slate-900 leading-snug">
+                                {faq.question}
+                              </span>
+                            </div>
+                            <span className="text-slate-400 shrink-0">
+                              {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                            </span>
+                          </button>
+                        ) : (
+                          <div className="p-3 text-right flex items-start gap-2">
+                            <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
+                              {idx + 1}
+                            </span>
+                            <span className="text-xs sm:text-[13px] font-bold text-slate-900 leading-snug">
+                              {faq.question}
+                            </span>
+                          </div>
+                        )}
+
+                        {hasAnswer && isOpen && (
+                          <div className="px-3 pb-3 pt-0 text-xs sm:text-[12.5px] text-slate-600 leading-relaxed font-normal border-t border-amber-100/60 mt-1 pt-2">
+                            <div className="flex items-start gap-2">
+                              <span className="text-amber-600 font-bold shrink-0 text-xs">מענה:</span>
+                              <span>{faq.answer}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* 3. מפקד ממונה ישיר (אם יש) */}
             {parentOfSelected && (

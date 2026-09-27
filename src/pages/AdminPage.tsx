@@ -28,10 +28,12 @@ import {
   Sparkles,
   Eye,
   EyeOff,
-  RefreshCw
+  RefreshCw,
+  HelpCircle
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../services/db';
+import { getNodeProfileDetails } from '../services/interfaceMapping';
 import { 
   UserProgressOverview, 
   Role, 
@@ -564,10 +566,33 @@ export const AdminPage: React.FC = () => {
     setEditingNode({
       title: '',
       holder_name: '',
-      description: '',
+      role_definition: 'דוגמה',
+      description: 'דוגמה',
+      responsibilities: ['דוגמה', 'דוגמה'],
+      faqs: [
+        { question: 'דוגמה', answer: 'דוגמה' },
+        { question: 'דוגמה', answer: '' }
+      ],
       interface_details: 'ממשק עבודה שוטף וסנכרון תהליכים.',
       parent_id: orgNodes.length > 0 ? orgNodes[0].id : null,
       role_interfaces: {},
+    });
+    setCustomInterfaceRoleId('');
+    setIsNodeModalOpen(true);
+  };
+
+  const handleEditNode = (node: OrgNode) => {
+    const profile = getNodeProfileDetails(node);
+    setEditingNode({
+      ...node,
+      role_definition: node.role_definition || profile.roleDefinition,
+      description: node.description || profile.roleDefinition,
+      responsibilities: (node.responsibilities && node.responsibilities.length > 0)
+        ? [...node.responsibilities]
+        : [...profile.responsibilities],
+      faqs: (node.faqs && node.faqs.length > 0)
+        ? node.faqs.map((f) => ({ ...f }))
+        : profile.faqs.map((f) => ({ ...f })),
     });
     setCustomInterfaceRoleId('');
     setIsNodeModalOpen(true);
@@ -580,15 +605,37 @@ export const AdminPage: React.FC = () => {
       return;
     }
 
+    const cleanResponsibilities = (editingNode.responsibilities || [])
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+
+    const cleanFaqs = (editingNode.faqs || [])
+      .map((f) => ({
+        question: f.question.trim(),
+        answer: f.answer?.trim() || undefined,
+      }))
+      .filter((f) => f.question.length > 0);
+
+    const roleDef = editingNode.role_definition?.trim() || editingNode.description?.trim() || 'דוגמה';
+
     try {
       if (editingNode.id) {
-        await db.updateOrgNode(editingNode.id, editingNode);
+        await db.updateOrgNode(editingNode.id, {
+          ...editingNode,
+          role_definition: roleDef,
+          description: roleDef,
+          responsibilities: cleanResponsibilities.length > 0 ? cleanResponsibilities : ['דוגמה', 'דוגמה'],
+          faqs: cleanFaqs,
+        });
         showStatus('התפקיד בעץ עודכן בהצלחה');
       } else {
         await db.createOrgNode({
           title: editingNode.title.trim(),
           holder_name: editingNode.holder_name.trim(),
-          description: editingNode.description?.trim() || 'תפקיד במבנה הארגוני',
+          role_definition: roleDef,
+          description: roleDef,
+          responsibilities: cleanResponsibilities.length > 0 ? cleanResponsibilities : ['דוגמה', 'דוגמה'],
+          faqs: cleanFaqs,
           interface_details: editingNode.interface_details?.trim() || 'ממשק עבודה שוטף וסנכרון תהליכים.',
           parent_id: editingNode.parent_id && editingNode.parent_id.trim() !== '' ? editingNode.parent_id : null,
           role_interfaces: editingNode.role_interfaces || {},
@@ -1960,7 +2007,7 @@ export const AdminPage: React.FC = () => {
                       </span>
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => { setEditingNode(node); setIsNodeModalOpen(true); }}
+                          onClick={() => handleEditNode(node)}
                           className="p-1.5 text-slate-500 hover:text-brand-600 rounded-lg hover:bg-slate-100"
                           title="ערוך צומת"
                         >
@@ -1979,8 +2026,16 @@ export const AdminPage: React.FC = () => {
                     <h4 className="font-bold text-base text-slate-900">{node.title}</h4>
                     <p className="text-xs text-brand-700 font-semibold mb-2">מאייש: {node.holder_name}</p>
                     
-                    <div className="space-y-1.5 text-xs text-slate-600">
-                      <div><strong className="text-slate-800">מהות:</strong> {node.description}</div>
+                    <div className="space-y-1.5 text-xs text-slate-600 mt-2 pt-2 border-t border-slate-100">
+                      <div><strong className="text-slate-800">הגדרת תפקיד:</strong> {node.role_definition || node.description}</div>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500 py-1">
+                        <span className="inline-flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-md font-medium">
+                          ✓ {node.responsibilities?.length || 2} סעיפי אחריות
+                        </span>
+                        <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md font-medium">
+                          ? {node.faqs?.length || 2} שאלות נפוצות
+                        </span>
+                      </div>
                       <div><strong className="text-slate-800">ממשקים:</strong> {node.interface_details}</div>
                     </div>
                   </div>
@@ -2055,16 +2110,185 @@ export const AdminPage: React.FC = () => {
                     </select>
                   </div>
 
+                  {/* 1. הגדרת תפקיד */}
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 mb-1">מהות התפקיד ותחומי אחריות</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <Briefcase className="w-3.5 h-3.5 text-brand-600" />
+                        <span>הגדרת תפקיד</span>
+                      </label>
+                      <span className="text-[10px] text-slate-400">מהות וייעוד התפקיד</span>
+                    </div>
                     <textarea
                       rows={2}
                       required
-                      value={editingNode.description || ''}
-                      onChange={(e) => setEditingNode({ ...editingNode, description: e.target.value })}
-                      placeholder="הגדרת ייעוד התפקיד ואחריות הליבה..."
+                      value={editingNode.role_definition ?? editingNode.description ?? ''}
+                      onChange={(e) => setEditingNode({ 
+                        ...editingNode, 
+                        role_definition: e.target.value,
+                        description: e.target.value 
+                      })}
+                      placeholder="הגדרת ייעוד ומהות התפקיד..."
                       className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
                     ></textarea>
+                  </div>
+
+                  {/* 2. תחומי אחריות (סעיפים נפרדים) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <CheckSquare className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>תחומי אחריות (סעיפים)</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const currentResps = editingNode.responsibilities ? [...editingNode.responsibilities] : ['דוגמה', 'דוגמה'];
+                          setEditingNode({ ...editingNode, responsibilities: [...currentResps, ''] });
+                        }}
+                        className="text-[11px] font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>הוסף סעיף אחריות</span>
+                      </button>
+                    </div>
+                    <div className="space-y-1.5 p-3 bg-slate-50 border border-slate-200 rounded-2xl">
+                      {((editingNode.responsibilities && editingNode.responsibilities.length > 0)
+                        ? editingNode.responsibilities
+                        : ['דוגמה', 'דוגמה']
+                      ).map((resp, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-emerald-600 shrink-0">✓</span>
+                          <input
+                            type="text"
+                            value={resp}
+                            onChange={(e) => {
+                              const list = editingNode.responsibilities ? [...editingNode.responsibilities] : ['דוגמה', 'דוגמה'];
+                              list[idx] = e.target.value;
+                              setEditingNode({ ...editingNode, responsibilities: list });
+                            }}
+                            placeholder={`סעיף אחריות ${idx + 1}...`}
+                            className="flex-1 px-3 py-1.5 rounded-xl border border-slate-300 text-xs bg-white outline-none focus:border-brand-500"
+                          />
+                          {editingNode.responsibilities && editingNode.responsibilities.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const list = [...editingNode.responsibilities!];
+                                list.splice(idx, 1);
+                                setEditingNode({ ...editingNode, responsibilities: list });
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors shrink-0"
+                              title="מחק סעיף זה"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 3. שאלות נפוצות (רשימה דינמית - הוספה/הסרה) */}
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
+                        <span>שאלות נפוצות ({editingNode.faqs?.length ?? 2})</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const currentFaqs = editingNode.faqs ? [...editingNode.faqs] : [
+                            { question: 'דוגמה', answer: 'דוגמה' },
+                            { question: 'דוגמה', answer: '' }
+                          ];
+                          setEditingNode({
+                            ...editingNode,
+                            faqs: [...currentFaqs, { question: '', answer: '' }]
+                          });
+                        }}
+                        className="text-[11px] font-bold text-amber-700 hover:text-amber-800 flex items-center gap-1 cursor-pointer bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-lg transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                        <span>הוסף שאלה</span>
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 p-3 bg-amber-50/40 border border-amber-200/80 rounded-2xl">
+                      {((editingNode.faqs && editingNode.faqs.length > 0)
+                        ? editingNode.faqs
+                        : [
+                            { question: 'דוגמה', answer: 'דוגמה' },
+                            { question: 'דוגמה', answer: '' }
+                          ]
+                      ).map((faq, qIdx) => {
+                        const faqsList = editingNode.faqs && editingNode.faqs.length > 0
+                          ? editingNode.faqs
+                          : [
+                              { question: 'דוגמה', answer: 'דוגמה' },
+                              { question: 'דוגמה', answer: '' }
+                            ];
+
+                        return (
+                          <div key={qIdx} className="p-2.5 bg-white rounded-xl border border-amber-200/60 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-1">
+                                <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0">
+                                  {qIdx + 1}
+                                </span>
+                                <input
+                                  type="text"
+                                  value={faq.question}
+                                  onChange={(e) => {
+                                    const updated = [...faqsList];
+                                    updated[qIdx] = { ...faq, question: e.target.value };
+                                    setEditingNode({ ...editingNode, faqs: updated });
+                                  }}
+                                  placeholder={`נוסח שאלה ${qIdx + 1}...`}
+                                  className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs outline-none focus:border-brand-500 font-semibold text-slate-900"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...faqsList];
+                                  updated.splice(qIdx, 1);
+                                  setEditingNode({ ...editingNode, faqs: updated });
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors shrink-0"
+                                title="מחק שאלה זו"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[10px] font-bold text-slate-500">מענה לשאלה {qIdx + 1}:</span>
+                                <span className="text-[9.5px] text-slate-400 font-normal">אופציונלי - השאר ריק אם אין מענה</span>
+                              </div>
+                              <textarea
+                                rows={2}
+                                value={faq.answer || ''}
+                                onChange={(e) => {
+                                  const updated = [...faqsList];
+                                  updated[qIdx] = { ...faq, answer: e.target.value };
+                                  setEditingNode({ ...editingNode, faqs: updated });
+                                }}
+                                placeholder={`מענה לשאלה ${qIdx + 1} (אופציונלי)...`}
+                                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-xs outline-none focus:border-brand-500"
+                              ></textarea>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {editingNode.faqs && editingNode.faqs.length === 0 && (
+                        <div className="text-center py-3 text-xs text-slate-400">
+                          אין שאלות נפוצות מוגדרות כרגע. לחץ על &quot;הוסף שאלה&quot; להוספת שאלה.
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div>

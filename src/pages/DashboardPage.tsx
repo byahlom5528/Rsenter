@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
   CheckCircle2, 
@@ -18,7 +18,8 @@ import {
   ShieldAlert, 
   ExternalLink,
   Edit3,
-  X
+  X,
+  ChevronDown
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { useAuth } from '../context/AuthContext';
@@ -37,6 +38,10 @@ export const DashboardPage: React.FC = () => {
   const [tasksWithProgress, setTasksWithProgress] = useState<TaskWithProgress[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all');
+  
+  // Accordion state: by default only the active task is expanded
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Record<string, boolean>>({});
+  const hasAutoScrolledRef = useRef(false);
   
   // State for task answer submissions
   const [answersState, setAnswersState] = useState<Record<string, string>>({});
@@ -113,6 +118,62 @@ export const DashboardPage: React.FC = () => {
     return () => unsubscribe();
   }, [currentUser]);
 
+  const isTaskExpanded = (task: TaskWithProgress): boolean => {
+    if (task.id in expandedTaskIds) {
+      return expandedTaskIds[task.id];
+    }
+    // Default: only the active task is open!
+    return Boolean(task.isCurrentActive);
+  };
+
+  const toggleTaskExpanded = (taskId: string) => {
+    setExpandedTaskIds((prev) => {
+      const targetTask = tasksWithProgress.find((t) => t.id === taskId);
+      const isCurrentlyExpanded = taskId in prev 
+        ? prev[taskId] 
+        : Boolean(targetTask?.isCurrentActive);
+      return {
+        ...prev,
+        [taskId]: !isCurrentlyExpanded,
+      };
+    });
+  };
+
+  const areAllExpanded = useMemo(() => {
+    if (tasksWithProgress.length === 0) return false;
+    return tasksWithProgress.every((t) => isTaskExpanded(t));
+  }, [tasksWithProgress, expandedTaskIds]);
+
+  const toggleExpandAll = () => {
+    if (areAllExpanded) {
+      const next: Record<string, boolean> = {};
+      tasksWithProgress.forEach((t) => {
+        next[t.id] = Boolean(t.isCurrentActive);
+      });
+      setExpandedTaskIds(next);
+    } else {
+      const next: Record<string, boolean> = {};
+      tasksWithProgress.forEach((t) => {
+        next[t.id] = true;
+      });
+      setExpandedTaskIds(next);
+    }
+  };
+
+  // Auto-scroll to active task on initial dashboard load
+  useEffect(() => {
+    if (!isLoading && tasksWithProgress.length > 0 && !hasAutoScrolledRef.current) {
+      hasAutoScrolledRef.current = true;
+      const timer = setTimeout(() => {
+        const activeElement = document.getElementById('active-task-card');
+        if (activeElement) {
+          activeElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 220);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, tasksWithProgress]);
+
   // Memoize task stats
   const { totalTasks, completedTasks, progressPercent, isAllCompleted } = useMemo(() => {
     const total = tasksWithProgress.length;
@@ -181,8 +242,15 @@ export const DashboardPage: React.FC = () => {
         await db.completeTask(currentUser.id, task.id, serializeBinaryAnswers(currentTaskAnswers));
         triggerConfetti();
         setEditingAnswerTaskId(null);
+        setExpandedTaskIds((prev) => ({ ...prev, [task.id]: false }));
         await loadDashboardData();
         await refreshUserData();
+        setTimeout(() => {
+          const nextActive = document.getElementById('active-task-card');
+          if (nextActive) {
+            nextActive.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 250);
       } catch (err) {
         console.error('Failed to complete binary choice task', err);
         setErrorMessages({
@@ -216,8 +284,15 @@ export const DashboardPage: React.FC = () => {
       await db.completeTask(currentUser.id, task.id, hasQuestion ? (currentAnswer.trim() || undefined) : undefined);
       triggerConfetti();
       setEditingAnswerTaskId(null);
+      setExpandedTaskIds((prev) => ({ ...prev, [task.id]: false }));
       await loadDashboardData();
       await refreshUserData();
+      setTimeout(() => {
+        const nextActive = document.getElementById('active-task-card');
+        if (nextActive) {
+          nextActive.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 250);
     } catch (err) {
       console.error('Failed to complete task', err);
       setErrorMessages({
@@ -394,39 +469,53 @@ export const DashboardPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Filter Pills (Scrollable on mobile) */}
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto -mx-3.5 px-3.5 sm:mx-0 sm:px-1 no-scrollbar shrink-0">
-            <button
-              onClick={() => setFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all ${
-                filter === 'all'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              הכל ({tasksWithProgress.length})
-            </button>
+          {/* Controls: Filter Pills & Accordion Toggle */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Filter Pills (Scrollable on mobile) */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 overflow-x-auto -mx-3.5 px-3.5 sm:mx-0 sm:px-1 no-scrollbar shrink-0">
+              <button
+                onClick={() => setFilter('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all ${
+                  filter === 'all'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                הכל ({tasksWithProgress.length})
+              </button>
 
-            <button
-              onClick={() => setFilter('pending')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all ${
-                filter === 'pending'
-                  ? 'bg-white text-brand-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              לביצוע ({totalTasks - completedTasks})
-            </button>
+              <button
+                onClick={() => setFilter('pending')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all ${
+                  filter === 'pending'
+                    ? 'bg-white text-brand-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                לביצוע ({totalTasks - completedTasks})
+              </button>
 
+              <button
+                onClick={() => setFilter('completed')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all ${
+                  filter === 'completed'
+                    ? 'bg-white text-emerald-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                הושלמו ({completedTasks})
+              </button>
+            </div>
+
+            {/* Toggle Expand/Collapse All */}
             <button
-              onClick={() => setFilter('completed')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold shrink-0 transition-all ${
-                filter === 'completed'
-                  ? 'bg-white text-emerald-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
+              type="button"
+              onClick={toggleExpandAll}
+              className="text-[11px] font-bold text-slate-600 hover:text-brand-700 transition-colors flex items-center gap-1 bg-white hover:bg-slate-50 border border-slate-200/90 px-2.5 py-1.5 rounded-xl shadow-2xs shrink-0 mr-auto sm:mr-0"
+              title={areAllExpanded ? 'צמצם את כל המשימות' : 'הרחב את כל המשימות'}
             >
-              הושלמו ({completedTasks})
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${areAllExpanded ? 'rotate-180' : ''}`} />
+              <span>{areAllExpanded ? 'צמצם הכל' : 'הרחב הכל'}</span>
             </button>
           </div>
         </div>
@@ -458,108 +547,128 @@ export const DashboardPage: React.FC = () => {
             const mediaInfo = getMediaInfo(task.media_url);
             const hasQuestion = task.type === 'text_question' || (task.type === 'media_question' && Boolean(task.question_prompt?.trim()));
 
+            const isExpanded = isTaskExpanded(task);
+
             return (
               <div
                 key={task.id}
-                className={`rounded-2xl transition-all duration-200 border text-right overflow-hidden ${
+                id={isActive ? 'active-task-card' : `task-card-${task.id}`}
+                className={`rounded-2xl transition-all duration-200 border text-right overflow-hidden scroll-mt-20 sm:scroll-mt-24 ${
                   isCompleted
-                    ? 'bg-white/90 border-emerald-200 shadow-xs'
+                    ? 'bg-white/95 border-emerald-200 shadow-2xs hover:border-emerald-300'
                     : isActive
                     ? 'bg-white border-brand-500 shadow-lg shadow-brand-500/10 ring-2 ring-brand-500/20'
-                    : 'bg-slate-50/80 border-slate-200/80 opacity-75'
+                    : 'bg-slate-50/80 border-slate-200/80 opacity-80 hover:opacity-100'
                 }`}
               >
                 
-                {/* Task Header Bar */}
-                <div className="p-4 sm:p-6">
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-3">
-                    
-                    {/* Step badge & Title */}
-                    <div className="flex items-start gap-3">
-                      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm shrink-0 transition-transform ${
-                        isCompleted
-                          ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-500/20'
-                          : isActive
-                          ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30 scale-105'
-                          : 'bg-slate-200 text-slate-500'
-                      }`}>
-                        {isCompleted ? (
-                          <Check className="w-4 h-4 sm:w-5 sm:h-5 stroke-[3]" />
-                        ) : isLocked ? (
-                          <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        ) : (
-                          <span>{task.step_order}</span>
+                {/* Task Header Bar (Clickable to toggle expand/collapse) */}
+                <div
+                  onClick={() => toggleTaskExpanded(task.id)}
+                  className={`p-3.5 sm:p-5 flex items-center justify-between gap-3 cursor-pointer select-none transition-colors ${
+                    isExpanded ? 'bg-slate-50/40' : 'hover:bg-slate-50/80'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm shrink-0 transition-transform ${
+                      isCompleted
+                        ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-500/20'
+                        : isActive
+                        ? 'bg-brand-600 text-white shadow-md shadow-brand-500/30 scale-105'
+                        : 'bg-slate-200 text-slate-500'
+                    }`}>
+                      {isCompleted ? (
+                        <Check className="w-4 h-4 sm:w-5 sm:h-5 stroke-[3]" />
+                      ) : isLocked ? (
+                        <Lock className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      ) : (
+                        <span>{task.step_order}</span>
+                      )}
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                        <span className="text-[11px] font-extrabold text-slate-500">שלב #{task.step_order}</span>
+                        
+                        {/* Task Type Tag */}
+                        {task.type === 'simple_check' && (
+                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-slate-500" />
+                            <span>קריאה ואישור</span>
+                          </span>
+                        )}
+                        {task.type === 'media_question' && (
+                          <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md border border-blue-200 flex items-center gap-1">
+                            <Video className="w-3 h-3 text-blue-600" />
+                            <span>{hasQuestion ? 'מדיה + שאלה' : 'צפייה במדיה'}</span>
+                          </span>
+                        )}
+                        {task.type === 'text_question' && (
+                          <span className="text-[10px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md border border-purple-200 flex items-center gap-1">
+                            <MessageSquare className="w-3 h-3 text-purple-600" />
+                            <span>שאלת הבנה</span>
+                          </span>
+                        )}
+                        {task.type === 'binary_choice' && (
+                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-slate-500" />
+                            <span>בחירה בין 2 אפשרויות</span>
+                          </span>
+                        )}
+
+                        {/* Status Badge */}
+                        {isCompleted && (
+                          <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>הושלם</span>
+                          </span>
+                        )}
+                        {isActive && (
+                          <span className="text-[10px] font-bold bg-brand-100 text-brand-800 px-2 py-0.5 rounded-full animate-pulse">
+                            לביצוע כעת
+                          </span>
+                        )}
+                        {isLocked && (
+                          <span className="text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Lock className="w-2.5 h-2.5" />
+                            <span>נעול</span>
+                          </span>
                         )}
                       </div>
 
-                      <div>
-                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                          <span className="text-[11px] font-extrabold text-slate-500">שלב #{task.step_order}</span>
-                          
-                          {/* Task Type Tag */}
-                          {task.type === 'simple_check' && (
-                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3 text-slate-500" />
-                              <span>קריאה ואישור</span>
-                            </span>
-                          )}
-                          {task.type === 'media_question' && (
-                            <span className="text-[10px] font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md border border-blue-200 flex items-center gap-1">
-                              <Video className="w-3 h-3 text-blue-600" />
-                              <span>{hasQuestion ? 'מדיה + שאלה' : 'צפייה במדיה'}</span>
-                            </span>
-                          )}
-                          {task.type === 'text_question' && (
-                            <span className="text-[10px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md border border-purple-200 flex items-center gap-1">
-                              <MessageSquare className="w-3 h-3 text-purple-600" />
-                              <span>שאלת הבנה</span>
-                            </span>
-                          )}
-                          {task.type === 'binary_choice' && (
-                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200 flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3 text-slate-500" />
-                              <span>בחירה בין 2 אפשרויות</span>
-                            </span>
-                          )}
-
-                          {/* Status Badge */}
-                          {isCompleted && (
-                            <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" />
-                              <span>הושלם</span>
-                            </span>
-                          )}
-                          {isActive && (
-                            <span className="text-[10px] font-bold bg-brand-100 text-brand-800 px-2 py-0.5 rounded-full animate-pulse">
-                              לביצוע כעת
-                            </span>
-                          )}
-                          {isLocked && (
-                            <span className="text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <Lock className="w-2.5 h-2.5" />
-                              <span>נעול</span>
-                            </span>
-                          )}
-                        </div>
-
-                        <h3 className={`text-sm sm:text-base font-bold ${isLocked ? 'text-slate-600' : 'text-slate-900'}`}>
-                          {task.title}
-                        </h3>
-                      </div>
+                      <h3 className={`text-sm sm:text-base font-bold truncate ${isLocked ? 'text-slate-600' : 'text-slate-900'}`}>
+                        {task.title}
+                      </h3>
                     </div>
+                  </div>
 
-                    {/* Completion Date */}
+                  {/* Left side (RTL end): Completion date + Chevron toggle */}
+                  <div className="flex items-center gap-2 shrink-0">
                     {isCompleted && task.progress?.completed_at && (
-                      <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg font-medium self-start sm:self-auto">
+                      <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg font-medium hidden sm:inline-block">
                         הושלם ב-{new Date(task.progress.completed_at).toLocaleDateString('he-IL')}
                       </span>
                     )}
-                  </div>
 
-                  {/* Task Instructions */}
-                  <p className={`text-xs sm:text-sm leading-relaxed mb-3 ${isLocked ? 'text-slate-500' : 'text-slate-700'}`}>
-                    {task.description}
-                  </p>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                      isActive 
+                        ? 'text-brand-700 bg-brand-50' 
+                        : isCompleted
+                        ? 'text-emerald-700 bg-emerald-50'
+                        : 'text-slate-400 bg-slate-100'
+                    }`}>
+                      <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expanded Task Body */}
+                {isExpanded && (
+                  <div className="p-4 sm:p-6 pt-3 sm:pt-4 border-t border-slate-100/90 space-y-4">
+                    {/* Task Instructions */}
+                    <p className={`text-xs sm:text-sm leading-relaxed ${isLocked ? 'text-slate-500' : 'text-slate-700'}`}>
+                      {task.description}
+                    </p>
 
                   {/* MEDIA EMBED (If type === 'media_question') */}
                   {task.type === 'media_question' && task.media_url && !isLocked && (
@@ -874,9 +983,10 @@ export const DashboardPage: React.FC = () => {
                   )}
 
                 </div>
+              )}
 
-              </div>
-            );
+            </div>
+          );
           })
         )}
       </div>

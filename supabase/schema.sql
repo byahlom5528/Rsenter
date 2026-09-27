@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS org_nodes (
     title VARCHAR(255) NOT NULL,
     holder_name VARCHAR(255) NOT NULL,
     description TEXT NOT NULL,
+    role_definition TEXT DEFAULT '',
+    responsibilities JSONB DEFAULT '[]'::jsonb NOT NULL,
+    faqs JSONB DEFAULT '[]'::jsonb NOT NULL,
     interface_details TEXT NOT NULL,
     role_interfaces JSONB DEFAULT '{}'::jsonb NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL

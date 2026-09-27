@@ -173,3 +173,39 @@ export function getSimplifiedRoleInterface(
     keyTouchpoint: 'פגישות עבודה תקופתיות וערוצי תקשורת יחידתיים.'
   };
 }
+
+export interface RoleFaqItem {
+  question: string;
+  answer?: string | null;
+}
+
+export interface NodeProfileDetails {
+  roleDefinition: string;
+  responsibilities: string[];
+  faqs: RoleFaqItem[]; // Dynamic array of FAQs
+}
+
+export function getNodeProfileDetails(
+  targetNode: OrgNode,
+  _userRole?: Role | null
+): NodeProfileDetails {
+  const roleDefinition = targetNode.role_definition?.trim() || 'דוגמה';
+
+  const responsibilities = (targetNode.responsibilities && targetNode.responsibilities.length > 0)
+    ? targetNode.responsibilities
+    : ['דוגמה', 'דוגמה'];
+
+  const faqs: RoleFaqItem[] = (targetNode.faqs !== undefined)
+    ? targetNode.faqs
+    : [
+        { question: 'דוגמה', answer: 'דוגמה' },
+        { question: 'דוגמה' }
+      ];
+
+  return {
+    roleDefinition,
+    responsibilities,
+    faqs,
+  };
+}
+

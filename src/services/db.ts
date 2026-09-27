@@ -1185,6 +1185,9 @@ class DBService {
     const newNode: OrgNode = {
       title: nodeData.title || '',
       holder_name: nodeData.holder_name || '',
+      role_definition: nodeData.role_definition || '',
+      responsibilities: nodeData.responsibilities || [],
+      faqs: nodeData.faqs || [],
       description: nodeData.description || 'תפקיד במבנה הארגוני',
       interface_details: nodeData.interface_details || 'ממשק עבודה שוטף וסנכרון תהליכים',
       parent_id: nodeData.parent_id && nodeData.parent_id.trim() !== '' ? nodeData.parent_id : null,
@@ -1202,10 +1205,16 @@ class DBService {
           this.notify();
           return data as OrgNode;
         } else if (error) {
-          const { role_interfaces, ...baseNode } = newNode;
+          const { role_interfaces, role_definition, responsibilities, faqs, ...baseNode } = newNode;
           const retryRes = await supabase.from('org_nodes').insert([baseNode]).select().single();
           if (!retryRes.error && retryRes.data) {
-            this.orgNodes.push({ ...retryRes.data, role_interfaces: newNode.role_interfaces } as OrgNode);
+            this.orgNodes.push({ 
+              ...retryRes.data, 
+              role_interfaces: newNode.role_interfaces,
+              role_definition: newNode.role_definition,
+              responsibilities: newNode.responsibilities,
+              faqs: newNode.faqs
+            } as OrgNode);
             this.saveAll();
             this.notify();
             return newNode;
@@ -1250,7 +1259,7 @@ class DBService {
           }
           return data as OrgNode;
         } else if (error) {
-          const { role_interfaces, ...baseData } = cleanData;
+          const { role_interfaces, role_definition, responsibilities, faqs, ...baseData } = cleanData;
           await supabase.from('org_nodes').update(baseData).eq('id', id);
         }
       } catch (e) {

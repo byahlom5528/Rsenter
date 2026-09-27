@@ -62,6 +62,11 @@ export interface BackpackResource {
   created_at?: string;
 }
 
+export interface RoleFaqItem {
+  question: string;
+  answer?: string | null;
+}
+
 export interface OrgNode {
   id: string;
   parent_id: string | null;
@@ -70,6 +75,9 @@ export interface OrgNode {
   description: string;
   interface_details: string;
   role_interfaces?: Record<string, string>; // Mapping of role_id -> custom interface text
+  role_definition?: string;
+  responsibilities?: string[];
+  faqs?: RoleFaqItem[];
   created_at?: string;
 }
 
