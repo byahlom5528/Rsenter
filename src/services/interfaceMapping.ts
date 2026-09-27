@@ -191,11 +191,11 @@ export function getNodeProfileDetails(
 ): NodeProfileDetails {
   const roleDefinition = targetNode.role_definition?.trim() || 'דוגמה';
 
-  const responsibilities = (targetNode.responsibilities && targetNode.responsibilities.length > 0)
+  const responsibilities = (Array.isArray(targetNode.responsibilities) && targetNode.responsibilities.length > 0)
     ? targetNode.responsibilities
     : ['דוגמה', 'דוגמה'];
 
-  const faqs: RoleFaqItem[] = (targetNode.faqs !== undefined)
+  const faqs: RoleFaqItem[] = (Array.isArray(targetNode.faqs) && targetNode.faqs.length > 0)
     ? targetNode.faqs
     : [
         { question: 'דוגמה', answer: 'דוגמה' },

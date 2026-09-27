@@ -942,7 +942,7 @@ class DBService {
           is_completed: true,
           answer_text: record.answer_text,
           completed_at: now,
-        });
+        }, { onConflict: 'user_id,task_id' });
       } catch (e) {
         console.warn('Supabase completeTask notice', e);
       }
@@ -982,7 +982,7 @@ class DBService {
           task_id: taskId,
           is_completed: isCompleted,
           completed_at: isCompleted ? now : null,
-        });
+        }, { onConflict: 'user_id,task_id' });
       } catch (e) {
         console.warn('Supabase toggleTaskCompletion notice', e);
       }
@@ -1056,7 +1056,7 @@ class DBService {
           is_completed: record.is_completed,
           answer_text: record.answer_text,
           completed_at: record.completed_at,
-        });
+        }, { onConflict: 'user_id,task_id' });
       } catch (e) {
         console.warn('Supabase saveTaskProgress notice', e);
       }

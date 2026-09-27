@@ -2143,7 +2143,7 @@ export const AdminPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          const currentResps = editingNode.responsibilities ? [...editingNode.responsibilities] : ['דוגמה', 'דוגמה'];
+                          const currentResps = editingNode.responsibilities ? [...editingNode.responsibilities] : [];
                           setEditingNode({ ...editingNode, responsibilities: [...currentResps, ''] });
                         }}
                         className="text-[11px] font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1 cursor-pointer"
@@ -2153,28 +2153,25 @@ export const AdminPage: React.FC = () => {
                       </button>
                     </div>
                     <div className="space-y-1.5 p-3 bg-slate-50 border border-slate-200 rounded-2xl">
-                      {((editingNode.responsibilities && editingNode.responsibilities.length > 0)
-                        ? editingNode.responsibilities
-                        : ['דוגמה', 'דוגמה']
-                      ).map((resp, idx) => (
+                      {(editingNode.responsibilities ?? []).map((resp, idx) => (
                         <div key={idx} className="flex items-center gap-2">
                           <span className="text-xs font-bold text-emerald-600 shrink-0">✓</span>
                           <input
                             type="text"
                             value={resp}
                             onChange={(e) => {
-                              const list = editingNode.responsibilities ? [...editingNode.responsibilities] : ['דוגמה', 'דוגמה'];
+                              const list = [...(editingNode.responsibilities || [])];
                               list[idx] = e.target.value;
                               setEditingNode({ ...editingNode, responsibilities: list });
                             }}
                             placeholder={`סעיף אחריות ${idx + 1}...`}
                             className="flex-1 px-3 py-1.5 rounded-xl border border-slate-300 text-xs bg-white outline-none focus:border-brand-500"
                           />
-                          {editingNode.responsibilities && editingNode.responsibilities.length > 1 && (
+                          {(editingNode.responsibilities?.length ?? 0) > 1 && (
                             <button
                               type="button"
                               onClick={() => {
-                                const list = [...editingNode.responsibilities!];
+                                const list = [...(editingNode.responsibilities || [])];
                                 list.splice(idx, 1);
                                 setEditingNode({ ...editingNode, responsibilities: list });
                               }}
@@ -2194,15 +2191,12 @@ export const AdminPage: React.FC = () => {
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-xs font-bold text-slate-800 flex items-center gap-1.5">
                         <HelpCircle className="w-3.5 h-3.5 text-amber-500" />
-                        <span>שאלות נפוצות ({editingNode.faqs?.length ?? 2})</span>
+                        <span>שאלות נפוצות ({editingNode.faqs?.length ?? 0})</span>
                       </label>
                       <button
                         type="button"
                         onClick={() => {
-                          const currentFaqs = editingNode.faqs ? [...editingNode.faqs] : [
-                            { question: 'דוגמה', answer: 'דוגמה' },
-                            { question: 'דוגמה', answer: '' }
-                          ];
+                          const currentFaqs = editingNode.faqs ? [...editingNode.faqs] : [];
                           setEditingNode({
                             ...editingNode,
                             faqs: [...currentFaqs, { question: '', answer: '' }]
@@ -2216,19 +2210,8 @@ export const AdminPage: React.FC = () => {
                     </div>
 
                     <div className="space-y-3 p-3 bg-amber-50/40 border border-amber-200/80 rounded-2xl">
-                      {((editingNode.faqs && editingNode.faqs.length > 0)
-                        ? editingNode.faqs
-                        : [
-                            { question: 'דוגמה', answer: 'דוגמה' },
-                            { question: 'דוגמה', answer: '' }
-                          ]
-                      ).map((faq, qIdx) => {
-                        const faqsList = editingNode.faqs && editingNode.faqs.length > 0
-                          ? editingNode.faqs
-                          : [
-                              { question: 'דוגמה', answer: 'דוגמה' },
-                              { question: 'דוגמה', answer: '' }
-                            ];
+                      {(editingNode.faqs ?? []).map((faq, qIdx) => {
+                        const faqsList = editingNode.faqs ?? [];
 
                         return (
                           <div key={qIdx} className="p-2.5 bg-white rounded-xl border border-amber-200/60 space-y-2">
@@ -2283,7 +2266,7 @@ export const AdminPage: React.FC = () => {
                         );
                       })}
 
-                      {editingNode.faqs && editingNode.faqs.length === 0 && (
+                      {(!editingNode.faqs || editingNode.faqs.length === 0) && (
                         <div className="text-center py-3 text-xs text-slate-400">
                           אין שאלות נפוצות מוגדרות כרגע. לחץ על &quot;הוסף שאלה&quot; להוספת שאלה.
                         </div>
