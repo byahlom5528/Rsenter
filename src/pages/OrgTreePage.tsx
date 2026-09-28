@@ -18,7 +18,10 @@ import {
   Maximize2,
   Briefcase,
   CheckSquare,
-  HelpCircle
+  HelpCircle,
+  Rows,
+  Columns2,
+  Layers
 } from 'lucide-react';
 import { OrgNode } from '../types/database';
 import { db } from '../services/db';
@@ -41,6 +44,7 @@ export const OrgTreePage: React.FC = () => {
   const [selectedNode, setSelectedNode] = useState<OrgNode | null>(null);
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
   const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
+  const [treeLayout, setTreeLayout] = useState<'vertical' | 'wide'>('vertical');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [openFaqIndices, setOpenFaqIndices] = useState<Record<number, boolean>>({ 0: true, 1: true });
   
@@ -173,7 +177,7 @@ export const OrgTreePage: React.FC = () => {
         window.removeEventListener('orientationchange', calculateBaseScale);
       };
     }
-  }, [isLoading, nodes.length, viewMode, calculateBaseScale]);
+  }, [isLoading, nodes.length, viewMode, treeLayout, calculateBaseScale]);
 
   // Global mouse drag listeners for free panning in all directions
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -381,67 +385,89 @@ export const OrgTreePage: React.FC = () => {
   /* CLASSIC REGULAR TREE RENDERING (ENLARGED TYPOGRAPHY, CLEAN MINIMALIST)   */
   /* ========================================================================= */
 
-  const renderRegularTreeNode = (node: TreeNode, level: number = 1) => {
+  /* Helper to render a single node card */
+  const renderNodeCard = (node: TreeNode, level: number) => {
     const isSelected = selectedNode?.id === node.id;
-    const hasChildren = node.children && node.children.length > 0;
-    const isCollapsed = collapsedNodes[node.id];
-
     const isMatch = searchTerm.trim() !== '' && (
       node.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       node.holder_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       node.description.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
-    // Original balanced width per tier ensuring the full tree fits naturally on screen
+    // Balanced width per tier ensuring the full tree fits naturally on screen
     const cardWidthClass = 
       level === 1 
         ? 'w-44 sm:w-52 md:w-56' 
         : level === 2 
         ? 'w-32 sm:w-36 md:w-40' 
-        : 'w-28 sm:w-32 md:w-34';
+        : 'w-28 sm:w-32 md:w-36';
+
+    return (
+      <div
+        key={node.id}
+        onClick={() => {
+          if (!hasMovedRef.current) {
+            handleSelectNode(node);
+          }
+        }}
+        className={`node-card cursor-pointer ${cardWidthClass} py-2.5 px-2 rounded-xl border-2 transition-all duration-150 text-center relative shadow-2xs ${
+          isSelected
+            ? 'bg-white border-brand-600 shadow-xl ring-3 ring-brand-500/30 scale-105 z-20'
+            : level === 1
+            ? 'bg-slate-900 text-white border-slate-700 hover:border-indigo-400 z-10'
+            : isMatch
+            ? 'bg-amber-50 border-amber-400 shadow-xs ring-2 ring-amber-300 z-10'
+            : 'bg-white border-slate-200 hover:border-brand-300 hover:shadow-md z-10'
+        }`}
+      >
+        {/* 1. שם התפקיד */}
+        <h4 className={`font-black tracking-tight leading-snug truncate ${
+          level === 1 
+            ? 'text-sm sm:text-base md:text-lg text-white' 
+            : level === 2 
+            ? 'text-[13px] sm:text-sm md:text-[15px] text-slate-900' 
+            : 'text-xs sm:text-[13px] md:text-sm text-slate-900'
+        }`}>
+          {node.title}
+        </h4>
+
+        {/* 2. שם מאייש */}
+        <div className={`font-semibold truncate mt-0.5 ${
+          level === 1 
+            ? 'text-xs sm:text-sm text-slate-300' 
+            : level === 2 
+            ? 'text-[11.5px] sm:text-xs text-slate-600' 
+            : 'text-[10.5px] sm:text-[11.5px] text-slate-600'
+        }`}>
+          {node.holder_name}
+        </div>
+      </div>
+    );
+  };
+
+  /* Helper to render leaf children in a single vertical column (saves horizontal space) */
+  const renderVerticalLeafChildren = (children: TreeNode[], level: number) => {
+    return (
+      <div className="flex flex-col items-center">
+        <div className="w-0.5 h-2.5 sm:h-3 bg-slate-300"></div>
+        {children.map((child, idx) => (
+          <React.Fragment key={child.id}>
+            {idx > 0 && <div className="w-0.5 h-2 sm:h-2.5 bg-slate-300"></div>}
+            {renderNodeCard(child, level + 1)}
+          </React.Fragment>
+        ))}
+      </div>
+    );
+  };
+
+  const renderRegularTreeNode = (node: TreeNode, level: number = 1) => {
+    const hasChildren = node.children && node.children.length > 0;
+    const isCollapsed = collapsedNodes[node.id];
 
     return (
       <div key={node.id} className="flex flex-col items-center select-none">
-        
         {/* Node Card */}
-        <div
-          onClick={() => {
-            if (!hasMovedRef.current) {
-              handleSelectNode(node);
-            }
-          }}
-          className={`node-card cursor-pointer ${cardWidthClass} py-2.5 px-2 rounded-xl border-2 transition-all duration-150 text-center relative shadow-2xs ${
-            isSelected
-              ? 'bg-white border-brand-600 shadow-xl ring-3 ring-brand-500/30 scale-105 z-20'
-              : level === 1
-              ? 'bg-slate-900 text-white border-slate-700 hover:border-indigo-400 z-10'
-              : isMatch
-              ? 'bg-amber-50 border-amber-400 shadow-xs ring-2 ring-amber-300 z-10'
-              : 'bg-white border-slate-200 hover:border-brand-300 hover:shadow-md z-10'
-          }`}
-        >
-          {/* 1. שם התפקיד */}
-          <h4 className={`font-black tracking-tight leading-snug truncate ${
-            level === 1 
-              ? 'text-sm sm:text-base md:text-lg text-white' 
-              : level === 2 
-              ? 'text-[13px] sm:text-sm md:text-[15px] text-slate-900' 
-              : 'text-xs sm:text-[13px] md:text-sm text-slate-900'
-          }`}>
-            {node.title}
-          </h4>
-
-          {/* 2. שם מאייש */}
-          <div className={`font-semibold truncate mt-0.5 ${
-            level === 1 
-              ? 'text-xs sm:text-sm text-slate-300' 
-              : level === 2 
-              ? 'text-[11.5px] sm:text-xs text-slate-600' 
-              : 'text-[10.5px] sm:text-[11.5px] text-slate-600'
-          }`}>
-            {node.holder_name}
-          </div>
-        </div>
+        {renderNodeCard(node, level)}
 
         {/* Children Branching with Connecting Lines */}
         {hasChildren && !isCollapsed && (
@@ -449,35 +475,51 @@ export const OrgTreePage: React.FC = () => {
             {/* Stem down from parent */}
             <div className="w-0.5 h-2.5 sm:h-3 bg-slate-300"></div>
 
-            {node.children.length > 1 ? (
-              <div className="flex justify-center items-start">
-                <div className="flex gap-1 sm:gap-1.5 justify-center items-start">
-                  {node.children.map((child, index) => {
-                    const isFirst = index === 0;
-                    const isLast = index === node.children.length - 1;
-                    return (
-                      <div key={child.id} className="relative flex flex-col items-center">
-                        {/* Horizontal branch line: in RTL, first is rightmost, last is leftmost */}
-                        {!isFirst && (
-                          <div className="absolute top-0 right-0 w-1/2 h-0.5 bg-slate-300"></div>
-                        )}
-                        {!isLast && (
-                          <div className="absolute top-0 left-0 w-1/2 h-0.5 bg-slate-300"></div>
-                        )}
-                        {/* Stem down to child */}
-                        <div className="w-0.5 h-2.5 sm:h-3 bg-slate-300"></div>
-                        {renderRegularTreeNode(child, level + 1)}
-                      </div>
-                    );
-                  })}
+            {/* Check if children are leaf nodes */}
+            {(() => {
+              const areLeaves = node.children.every((c) => !c.children || c.children.length === 0);
+
+              // Vertical 1-column mode for leaves with multiple items (default)
+              if (areLeaves && treeLayout === 'vertical' && node.children.length > 1) {
+                return renderVerticalLeafChildren(node.children, level);
+              }
+
+              // Standard horizontal branch (for wide mode, 2-child branches, or branches with subtrees)
+              if (node.children.length > 1) {
+                return (
+                  <div className="flex justify-center items-start">
+                    <div className="flex gap-1 sm:gap-1.5 justify-center items-start">
+                      {node.children.map((child, index) => {
+                        const isFirst = index === 0;
+                        const isLast = index === node.children.length - 1;
+                        return (
+                          <div key={child.id} className="relative flex flex-col items-center">
+                            {/* Horizontal branch line: in RTL, first is rightmost, last is leftmost */}
+                            {!isFirst && (
+                              <div className="absolute top-0 right-0 w-1/2 h-0.5 bg-slate-300"></div>
+                            )}
+                            {!isLast && (
+                              <div className="absolute top-0 left-0 w-1/2 h-0.5 bg-slate-300"></div>
+                            )}
+                            {/* Stem down to child */}
+                            <div className="w-0.5 h-2.5 sm:h-3 bg-slate-300"></div>
+                            {renderRegularTreeNode(child, level + 1)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }
+
+              // Single child
+              return (
+                <div className="flex flex-col items-center">
+                  <div className="w-0.5 h-2.5 sm:h-3 bg-slate-300"></div>
+                  {renderRegularTreeNode(node.children[0], level + 1)}
                 </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center">
-                <div className="w-0.5 h-2.5 sm:h-3 bg-slate-300"></div>
-                {renderRegularTreeNode(node.children[0], level + 1)}
-              </div>
-            )}
+              );
+            })()}
           </div>
         )}
 
@@ -674,6 +716,44 @@ export const OrgTreePage: React.FC = () => {
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>תצוגה מלאה</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Tree Layout Mode ("פריסת עץ") */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-brand-600" />
+                <span>פריסה:</span>
+              </span>
+
+              <div className="flex items-center gap-1 bg-white p-0.5 rounded-xl border border-slate-200 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={() => setTreeLayout('vertical')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                    treeLayout === 'vertical'
+                      ? 'bg-brand-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
+                  title="טור אנכי - כפיפים בטור אחד לחסכון מקסימלי במקום אופקי (ברירת מחדל)"
+                >
+                  <Rows className="w-3.5 h-3.5" />
+                  <span>טור אנכי</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTreeLayout('wide')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                    treeLayout === 'wide'
+                      ? 'bg-brand-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
+                  title="שורה רחבה - כל הכפיפים בשורה אחת"
+                >
+                  <Columns2 className="w-3.5 h-3.5" />
+                  <span>שורה רחבה</span>
                 </button>
               </div>
             </div>
