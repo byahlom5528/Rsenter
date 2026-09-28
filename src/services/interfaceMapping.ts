@@ -30,11 +30,11 @@ export function getSimplifiedRoleInterface(
 
   if (isMyNode) {
     return {
-      isMyNode: true,
-      relationshipBadge: '⭐ התפקיד שלך',
-      relationshipColor: 'bg-brand-100 text-brand-800 border-brand-300',
-      headline: `זהו כרטיס התפקיד שלך בארגון`,
-      interfaceText: `הובלה, ייזום וביצוע של כלל משימות הליבה בתחום ${roleName}, סנכרון שוטף מול המפקד והעמיתים, וניהול הפעילות השוטפת.`,
+      isMyNode: false,
+      relationshipBadge: '',
+      relationshipColor: '',
+      headline: targetNode.title,
+      interfaceText: targetNode.interface_details || `הובלה, ייזום וביצוע של משימות הליבה, סנכרון שוטף מול המפקד והעמיתים, וניהול הפעילות השוטפת.`,
       keyTouchpoint: 'שגרת עבודה יומיומית ומשוב תקופתי.'
     };
   }
@@ -166,8 +166,8 @@ export function getSimplifiedRoleInterface(
   // --- D. Default Fallback ---
   return {
     isMyNode: false,
-    relationshipBadge: '🤝 ממשק עבודה הדדי',
-    relationshipColor: 'bg-slate-100 text-slate-800 border-slate-300',
+    relationshipBadge: '',
+    relationshipColor: '',
     headline: `ממשק עבודה וסנכרון שוטף`,
     interfaceText: targetNode.interface_details || `ממשק עבודה שוטף לתיאום משימות, סנכרון תהליכים יחידתיים ושיתוף פעולה הדדי להשגת יעדי הארגון.`,
     keyTouchpoint: 'פגישות עבודה תקופתיות וערוצי תקשורת יחידתיים.'

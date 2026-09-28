@@ -10,7 +10,6 @@ import {
   ChevronDown, 
   ChevronUp,
   Sparkles, 
-  Zap, 
   Info,
   ZoomIn,
   ZoomOut,
@@ -131,7 +130,7 @@ export const OrgTreePage: React.FC = () => {
         setScale(fitScale);
         setPan({ x: 0, y: 0 });
         panRef.current = { x: 0, y: 0 };
-        setContainerHeight(Math.ceil(unscaledH * fitScale) + 32);
+        setContainerHeight(Math.ceil(unscaledH * fitScale) + 48);
       }
     }
   }, []);
@@ -503,8 +502,6 @@ export const OrgTreePage: React.FC = () => {
           className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-3 text-right cursor-pointer ${
             isSelected
               ? 'bg-brand-50 border-brand-500 shadow-sm ring-2 ring-brand-300'
-              : nodeRelative.isMyNode
-              ? 'bg-brand-50/70 border-brand-400'
               : 'bg-white border-slate-200 hover:bg-slate-50'
           }`}
           style={{ marginRight: `${depth * 14}px` }}
@@ -517,14 +514,7 @@ export const OrgTreePage: React.FC = () => {
             </div>
 
             <div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <h4 className="font-bold text-xs sm:text-sm text-slate-900 leading-snug">{node.title}</h4>
-                {currentRole && (
-                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${nodeRelative.relationshipColor}`}>
-                    {nodeRelative.relationshipBadge}
-                  </span>
-                )}
-              </div>
+              <h4 className="font-bold text-xs sm:text-sm text-slate-900 leading-snug">{node.title}</h4>
               <p className="text-[11px] text-slate-500 font-medium">מאייש: {node.holder_name}</p>
             </div>
           </div>
@@ -567,13 +557,7 @@ export const OrgTreePage: React.FC = () => {
             עץ מבנה ארגוני וממשקי עבודה
           </h1>
           <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-            {currentRole ? (
-              <span>
-                מבנה יחידתי מלא בתצוגה קבועה ונקייה. ממשקי העבודה מוצגים <strong>ביחס לתפקידך: {currentRole.name}</strong>.
-              </span>
-            ) : (
-              'עץ מבנה יחידתי בתצוגה קבועה ונקייה המותאמת במלואה לרוחב המסך במחשב ובנייד.'
-            )}
+            עץ מבנה יחידתי מלא בתצוגה נקייה המותאמת במלואה למחשב ולנייד.
           </p>
         </div>
       </div>
@@ -628,14 +612,6 @@ export const OrgTreePage: React.FC = () => {
 
       </div>
 
-      {/* Helpful Hint */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-1.5 bg-indigo-50/80 border border-indigo-200/60 rounded-xl text-[11.5px] text-indigo-900 font-medium">
-        <div className="flex items-center gap-1.5">
-          <Info className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-          <span>גרור עם העכבר/אצבע לכל הכיוונים • גלול עם הגלגלת או השתמש בכפתורי ה-Zoom • לחץ על תפקיד לצפייה בממשק</span>
-        </div>
-      </div>
-
       {/* Main Container */}
       {isLoading ? (
         <div className="bg-slate-100/80 border border-slate-200 rounded-2xl sm:rounded-3xl p-16 text-center text-slate-500 min-h-[460px] flex flex-col items-center justify-center">
@@ -646,74 +622,94 @@ export const OrgTreePage: React.FC = () => {
         
         /* 
            INTERACTIVE PAN & ZOOM CANVAS:
+           - Zoom settings header is situated permanently ABOVE the tree
+           - Tree structure is located cleanly and spaciously BELOW the zoom settings
            - Drag to move freely in any direction (X & Y)
            - Mouse wheel cursor-centered zoom
            - Touch pinch & pan gestures on mobile
-           - Floating toolbar with Zoom In / Out / Fit to Screen / Reset
         */
-        <div 
-          ref={containerRef}
-          onMouseDown={handleMouseDown}
-          className="w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl p-3 sm:p-4 shadow-2xs relative flex flex-col items-center justify-start overflow-hidden select-none cursor-grab active:cursor-grabbing"
-          style={{
-            height: containerHeight ? `${containerHeight}px` : 'auto',
-            minHeight: '380px',
-            touchAction: 'none'
-          }}
-        >
-          {/* Floating Pan & Zoom Controls Toolbar */}
+        <div className="w-full bg-white/95 border border-slate-200/80 rounded-2xl sm:rounded-3xl shadow-2xs overflow-hidden flex flex-col">
+          {/* Zoom Settings & Controls Toolbar - Sits at the top ABOVE the tree structure */}
           <div 
-            className="absolute top-3 right-3 z-30 flex items-center gap-1 bg-white/95 backdrop-blur-md px-2 py-1 rounded-xl border border-slate-200 shadow-sm"
+            className="w-full bg-slate-50/95 border-b border-slate-200/80 px-3 sm:px-5 py-2.5 flex flex-wrap items-center justify-between gap-3 z-20"
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <button
-              type="button"
-              onClick={zoomIn}
-              className="p-1 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 transition-colors"
-              title="זום פנימה (+)"
-            >
-              <ZoomIn className="w-4 h-4" />
-            </button>
+            {/* Zoom Controls ("הגדרות זום") */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <Move className="w-3.5 h-3.5 text-brand-600" />
+                <span>הגדרות זום:</span>
+              </span>
 
-            <span className="text-xs font-bold text-slate-700 min-w-[36px] text-center select-none">
-              {Math.round(scale * 100)}%
-            </span>
+              <div className="flex items-center gap-1 bg-white px-2 py-1 rounded-xl border border-slate-200 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={zoomIn}
+                  className="p-1 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 transition-colors"
+                  title="זום פנימה (+)"
+                >
+                  <ZoomIn className="w-4 h-4" />
+                </button>
 
-            <button
-              type="button"
-              onClick={zoomOut}
-              className="p-1 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 transition-colors"
-              title="זום החוצה (-)"
-            >
-              <ZoomOut className="w-4 h-4" />
-            </button>
+                <span className="text-xs font-bold text-slate-700 min-w-[38px] text-center select-none font-mono">
+                  {Math.round(scale * 100)}%
+                </span>
 
-            <div className="w-px h-3.5 bg-slate-200 mx-0.5" />
+                <button
+                  type="button"
+                  onClick={zoomOut}
+                  className="p-1 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 transition-colors"
+                  title="זום החוצה (-)"
+                >
+                  <ZoomOut className="w-4 h-4" />
+                </button>
 
-            <button
-              type="button"
-              onClick={resetToFullView}
-              className="flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 text-xs font-bold transition-colors"
-              title="אפס לתצוגה מלאה שרואים את כל העץ"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>תצוגה מלאה</span>
-            </button>
+                <div className="w-px h-3.5 bg-slate-200 mx-1" />
+
+                <button
+                  type="button"
+                  onClick={resetToFullView}
+                  className="flex items-center gap-1 px-2.5 py-0.5 rounded-lg hover:bg-slate-100 text-slate-700 hover:text-brand-600 text-xs font-bold transition-colors"
+                  title="אפס לתצוגה מלאה שרואים את כל העץ"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>תצוגה מלאה</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Hint & Navigation Instructions */}
+            <div className="flex items-center gap-1.5 text-[11.5px] text-slate-500 font-medium">
+              <Info className="w-3.5 h-3.5 text-brand-600 shrink-0" />
+              <span>גרור להזזה • גלגל לזום • לחץ על תפקיד לצפייה בממשק</span>
+            </div>
           </div>
 
-          {/* Canvas Content */}
+          {/* Interactive Pan & Zoom Canvas - Located cleanly BELOW the zoom settings */}
           <div 
-            ref={contentRef}
-            className="flex flex-col items-center origin-top select-none"
-            style={{ 
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
-              transformOrigin: 'top center',
-              width: 'max-content',
-              transition: isDragging ? 'none' : 'transform 0.1s ease-out',
-              willChange: 'transform'
+            ref={containerRef}
+            onMouseDown={handleMouseDown}
+            className="w-full relative flex flex-col items-center justify-start overflow-hidden select-none cursor-grab active:cursor-grabbing p-4 sm:p-6 bg-slate-50/20"
+            style={{
+              height: containerHeight ? `${containerHeight}px` : 'auto',
+              minHeight: '400px',
+              touchAction: 'none'
             }}
           >
-            {treeData.map((rootNode) => renderRegularTreeNode(rootNode, 1))}
+            {/* Canvas Content - Tree structure renders below */}
+            <div 
+              ref={contentRef}
+              className="flex flex-col items-center origin-top select-none pt-2 sm:pt-4"
+              style={{ 
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
+                transformOrigin: 'top center',
+                width: 'max-content',
+                transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+                willChange: 'transform'
+              }}
+            >
+              {treeData.map((rootNode) => renderRegularTreeNode(rootNode, 1))}
+            </div>
           </div>
         </div>
 
@@ -723,7 +719,7 @@ export const OrgTreePage: React.FC = () => {
         <div className="w-full bg-slate-100/80 border border-slate-200 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-3">
           <div className="bg-brand-50/80 border border-brand-200/90 p-3.5 rounded-2xl text-xs text-brand-900 font-medium flex items-center gap-2">
             <ListTree className="w-4 h-4 text-brand-600 shrink-0" />
-            <span>תצוגת רשימה היררכית נוחה. לחץ על כל תפקיד לצפייה בפירוט הממשק ביחס לתפקידך.</span>
+            <span>תצוגת רשימה היררכית נוחה. לחץ על כל תפקיד לצפייה בהגדרת התפקיד ובממשקי העבודה.</span>
           </div>
           <div className="space-y-2">
             {treeData.map((rootNode) => renderListItem(rootNode, 0))}
@@ -740,12 +736,7 @@ export const OrgTreePage: React.FC = () => {
               <Sparkles className="w-4 h-4" />
             </div>
             <div className="truncate">
-              <div className="flex items-center gap-1.5 truncate">
-                <span className="font-extrabold text-xs text-slate-900 truncate">{selectedNode.title}</span>
-                <span className={`text-[8.5px] font-extrabold px-1.5 py-0.2 rounded border ${relativeInterface.relationshipColor}`}>
-                  {relativeInterface.relationshipBadge}
-                </span>
-              </div>
+              <span className="font-extrabold text-xs text-slate-900 truncate block">{selectedNode.title}</span>
               <p className="text-[11px] text-slate-500 truncate">מאייש: <strong>{selectedNode.holder_name}</strong></p>
             </div>
           </div>
@@ -784,10 +775,6 @@ export const OrgTreePage: React.FC = () => {
             {/* Header: Title, Holder & Close Button */}
             <div className="flex items-start justify-between border-b border-slate-100 pb-3.5">
               <div>
-                <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border mb-1.5 ${relativeInterface.relationshipColor}`}>
-                  <Zap className="w-3 h-3" />
-                  <span>{relativeInterface.relationshipBadge}</span>
-                </span>
                 <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-snug">{selectedNode.title}</h3>
                 
                 <div className="flex items-center gap-2 text-xs text-slate-700 mt-2 bg-slate-50 p-2 rounded-xl border border-slate-200/70">
@@ -806,16 +793,13 @@ export const OrgTreePage: React.FC = () => {
               </button>
             </div>
 
-            {/* 1. ממשק איתי (Personalized work interface relative to logged-in role) */}
+            {/* 1. ממשקי עבודה וסנכרון */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <h4 className="text-xs font-black text-slate-900 uppercase flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4 text-brand-600" />
-                  <span>ממשק איתי (סנכרון והשפעה הדדית)</span>
+                  <span>ממשקי עבודה וסנכרון</span>
                 </h4>
-                <span className="text-[10px] font-bold text-brand-700 bg-brand-50 border border-brand-200 px-2 py-0.5 rounded-md">
-                  מותאם עבורך
-                </span>
               </div>
               <div className="p-4 bg-gradient-to-br from-brand-50/90 via-indigo-50/50 to-white rounded-2xl border border-brand-200/90 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium shadow-2xs">
                 {relativeInterface.interfaceText}
