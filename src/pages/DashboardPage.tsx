@@ -666,7 +666,7 @@ export const DashboardPage: React.FC = () => {
                 {isExpanded && (
                   <div className="p-4 sm:p-6 pt-3 sm:pt-4 border-t border-slate-100/90 space-y-4">
                     {/* Task Instructions */}
-                    <p className={`text-xs sm:text-sm leading-relaxed ${isLocked ? 'text-slate-500' : 'text-slate-700'}`}>
+                    <p className={`text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${isLocked ? 'text-slate-500' : 'text-slate-700'}`}>
                       {task.description}
                     </p>
 
@@ -803,7 +803,7 @@ export const DashboardPage: React.FC = () => {
                                       {qIndex + 1}
                                     </span>
                                   )}
-                                  <span className="text-xs sm:text-sm font-bold text-slate-900 leading-snug">
+                                  <span className="text-xs sm:text-sm font-bold text-slate-900 leading-snug whitespace-pre-wrap">
                                     {bq.question}
                                   </span>
                                 </div>
@@ -868,7 +868,7 @@ export const DashboardPage: React.FC = () => {
                           <HelpCircle className="w-4 h-4 text-brand-600 shrink-0 mt-0.5" />
                           <div>
                             <span className="text-[11px] font-bold text-brand-800 block mb-0.5">שאלת אימות והבנה:</span>
-                            <span className="text-xs sm:text-sm font-semibold">{task.question_prompt}</span>
+                            <span className="text-xs sm:text-sm font-semibold whitespace-pre-wrap block">{task.question_prompt}</span>
                           </div>
                         </div>
                       )}
@@ -921,10 +921,10 @@ export const DashboardPage: React.FC = () => {
                             )}
                           </div>
                           <textarea
-                            rows={3}
+                            rows={4}
                             value={answersState[task.id] ?? ''}
                             onChange={(e) => setAnswersState({ ...answersState, [task.id]: e.target.value })}
-                            placeholder="כתוב את תשובתך כאן בהתאם להנחיות..."
+                            placeholder="כתוב את תשובתך כאן בהתאם להנחיות... (ניתן לרדת שורה עם Enter)"
                             className="w-full p-2.5 text-xs sm:text-sm rounded-xl border border-slate-300 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 outline-none transition-all resize-y bg-white"
                           ></textarea>
                         </div>

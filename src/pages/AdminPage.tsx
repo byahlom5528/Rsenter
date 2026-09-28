@@ -1052,7 +1052,7 @@ export const AdminPage: React.FC = () => {
                           </div>
                         </div>
 
-                        <p className="text-xs text-slate-600 mb-2 leading-relaxed">
+                        <p className="text-xs text-slate-600 mb-2 leading-relaxed whitespace-pre-wrap">
                           {task.description}
                         </p>
 
@@ -1086,7 +1086,7 @@ export const AdminPage: React.FC = () => {
                           task.question_prompt && (
                             <div className="mb-2 p-2 rounded-lg bg-blue-50/70 border border-blue-100 text-xs text-blue-900">
                               <span className="font-bold block mb-0.5">❓ שאלת אימות:</span>
-                              <span>{task.question_prompt}</span>
+                              <span className="whitespace-pre-wrap">{task.question_prompt}</span>
                             </div>
                           )
                         )}
@@ -1277,7 +1277,7 @@ export const AdminPage: React.FC = () => {
                             : 'שאלת הבנה'}
                         </span>
                       </div>
-                      <p className="text-xs text-slate-600 leading-relaxed mb-1 line-clamp-2">
+                      <p className="text-xs text-slate-600 leading-relaxed mb-1 whitespace-pre-wrap line-clamp-2">
                         {task.description}
                       </p>
                       {task.type === 'binary_choice' ? (
@@ -1293,7 +1293,7 @@ export const AdminPage: React.FC = () => {
                         </div>
                       ) : (
                         task.question_prompt && (
-                          <p className="text-xs text-brand-700 font-medium">
+                          <p className="text-xs text-brand-700 font-medium whitespace-pre-wrap">
                             ❓ שאלת אימות: {task.question_prompt}
                           </p>
                         )
@@ -1444,12 +1444,12 @@ export const AdminPage: React.FC = () => {
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">הוראות ופירוט המשימה</label>
                     <textarea
-                      rows={3}
+                      rows={4}
                       required
                       value={editingTask.description || ''}
                       onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
-                      placeholder="פרט את הפעולות הנדרשות מהחניך בשלב זה..."
-                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
+                      placeholder="פרט את הפעולות הנדרשות מהחניך בשלב זה... (ניתן לרדת שורה עם Enter)"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500 resize-y"
                     ></textarea>
                   </div>
 
@@ -1505,17 +1505,17 @@ export const AdminPage: React.FC = () => {
                               <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
                                 כותרת או שאלה (אופציונלי - ניתן להשאיר ריק):
                               </label>
-                              <input
-                                type="text"
+                              <textarea
+                                rows={2}
                                 value={bq.question}
                                 onChange={(e) => {
                                   const updated = [...binaryQuestions];
                                   updated[qIndex].question = e.target.value;
                                   setBinaryQuestions(updated);
                                 }}
-                                placeholder="לדוגמה: האם ביצעת גיבוי? (או השאר ריק)"
-                                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 outline-none focus:border-slate-500 font-medium"
-                              />
+                                placeholder="לדוגמה: האם ביצעת גיבוי? (או השאר ריק, ניתן לרדת שורה עם Enter)"
+                                className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 outline-none focus:border-slate-500 font-medium resize-y"
+                              ></textarea>
                             </div>
 
                             <div className="grid grid-cols-2 gap-2">
@@ -1591,18 +1591,18 @@ export const AdminPage: React.FC = () => {
                           <span className="text-[11px] text-slate-400 font-normal">לא חובה</span>
                         )}
                       </div>
-                      <input
-                        type="text"
+                      <textarea
+                        rows={3}
                         required={editingTask.type === 'text_question'}
                         value={editingTask.question_prompt || ''}
                         onChange={(e) => setEditingTask({ ...editingTask, question_prompt: e.target.value })}
                         placeholder={
                           editingTask.type === 'text_question'
-                            ? 'לדוגמה: מהם שלושת שלבי הדיווח הנדרשים בנוהל?'
-                            : 'אופציונלי: הזן שאלה אם נדרש מענה מהחניך (השאר ריק לצפייה בלבד)'
+                            ? 'לדוגמה: מהם שלושת שלבי הדיווח הנדרשים בנוהל? (ניתן לרדת שורה עם Enter)'
+                            : 'אופציונלי: הזן שאלה אם נדרש מענה מהחניך (השאר ריק לצפייה בלבד, ניתן לרדת שורה עם Enter)'
                         }
-                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500"
-                      />
+                        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm outline-none focus:border-brand-500 resize-y"
+                      ></textarea>
                       {editingTask.type === 'media_question' && (
                         <p className="text-[11px] text-slate-500 mt-1">
                           💡 אם לא תוגדר שאלה, החניך יוכל לסמן את המשימה כהושלמה מיד לאחר הצפייה ללא צורך בהזנת תשובה.
@@ -2220,17 +2220,17 @@ export const AdminPage: React.FC = () => {
                                 <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0">
                                   {qIdx + 1}
                                 </span>
-                                <input
-                                  type="text"
+                                <textarea
+                                  rows={2}
                                   value={faq.question}
                                   onChange={(e) => {
                                     const updated = [...faqsList];
                                     updated[qIdx] = { ...faq, question: e.target.value };
                                     setEditingNode({ ...editingNode, faqs: updated });
                                   }}
-                                  placeholder={`נוסח שאלה ${qIdx + 1}...`}
-                                  className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs outline-none focus:border-brand-500 font-semibold text-slate-900"
-                                />
+                                  placeholder={`נוסח שאלה ${qIdx + 1}... (ניתן לרדת שורה עם Enter)`}
+                                  className="flex-1 px-3 py-1.5 rounded-lg border border-slate-300 text-xs outline-none focus:border-brand-500 font-semibold text-slate-900 resize-y"
+                                ></textarea>
                               </div>
                               <button
                                 type="button"
@@ -2251,15 +2251,15 @@ export const AdminPage: React.FC = () => {
                                 <span className="text-[9.5px] text-slate-400 font-normal">אופציונלי - השאר ריק אם אין מענה</span>
                               </div>
                               <textarea
-                                rows={2}
+                                rows={3}
                                 value={faq.answer || ''}
                                 onChange={(e) => {
                                   const updated = [...faqsList];
                                   updated[qIdx] = { ...faq, answer: e.target.value };
                                   setEditingNode({ ...editingNode, faqs: updated });
                                 }}
-                                placeholder={`מענה לשאלה ${qIdx + 1} (אופציונלי)...`}
-                                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-xs outline-none focus:border-brand-500"
+                                placeholder={`מענה לשאלה ${qIdx + 1} (אופציונלי, ניתן לרדת שורה עם Enter)...`}
+                                className="w-full px-3 py-1.5 rounded-lg border border-slate-300 text-xs outline-none focus:border-brand-500 resize-y"
                               ></textarea>
                             </div>
                           </div>

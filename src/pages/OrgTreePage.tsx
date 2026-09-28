@@ -876,7 +876,7 @@ export const OrgTreePage: React.FC = () => {
                               <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
                                 {idx + 1}
                               </span>
-                              <span className="text-xs sm:text-[13px] font-bold text-slate-900 leading-snug">
+                              <span className="text-xs sm:text-[13px] font-bold text-slate-900 leading-snug whitespace-pre-wrap">
                                 {faq.question}
                               </span>
                             </div>
@@ -889,7 +889,7 @@ export const OrgTreePage: React.FC = () => {
                             <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
                               {idx + 1}
                             </span>
-                            <span className="text-xs sm:text-[13px] font-bold text-slate-900 leading-snug">
+                            <span className="text-xs sm:text-[13px] font-bold text-slate-900 leading-snug whitespace-pre-wrap">
                               {faq.question}
                             </span>
                           </div>
@@ -899,7 +899,7 @@ export const OrgTreePage: React.FC = () => {
                           <div className="px-3 pb-3 pt-0 text-xs sm:text-[12.5px] text-slate-600 leading-relaxed font-normal border-t border-amber-100/60 mt-1 pt-2">
                             <div className="flex items-start gap-2">
                               <span className="text-amber-600 font-bold shrink-0 text-xs">מענה:</span>
-                              <span>{faq.answer}</span>
+                              <span className="whitespace-pre-wrap">{faq.answer}</span>
                             </div>
                           </div>
                         )}
