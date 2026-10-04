@@ -742,12 +742,18 @@ class DBService {
   }
 
   async updateTask(id: string, updateData: Partial<Task>): Promise<Task | null> {
-    const cleanUpdate = {
+    const cleanUpdate: Partial<Task> = {
       ...updateData,
-      description: updateData.description !== undefined ? (updateData.description || '') : undefined,
-      media_url: updateData.media_url !== undefined ? (updateData.media_url?.trim() || null) : undefined,
-      question_prompt: updateData.question_prompt !== undefined ? (updateData.question_prompt?.trim() || null) : undefined,
     };
+    if (updateData.description !== undefined) {
+      cleanUpdate.description = updateData.description || '';
+    }
+    if (updateData.media_url !== undefined) {
+      cleanUpdate.media_url = updateData.media_url?.trim() || null;
+    }
+    if (updateData.question_prompt !== undefined) {
+      cleanUpdate.question_prompt = updateData.question_prompt?.trim() || null;
+    }
 
     if (isSupabaseConfigured && supabase && isValidUUID(id)) {
       try {
@@ -804,6 +810,171 @@ class DBService {
     this.saveAll();
     this.notify();
     return this.tasks[idx];
+  }
+
+  public async syncAllToSupabase(): Promise<{ 
+    total: number; 
+    synced: number; 
+    tasksCount: number;
+    rolesCount: number;
+    usersCount: number;
+    progressCount: number;
+    orgNodesCount: number;
+    backpackCount: number;
+    errors: string[] 
+  }> {
+    if (!isSupabaseConfigured || !supabase) {
+      return { 
+        total: 0, 
+        synced: 0, 
+        tasksCount: 0,
+        rolesCount: 0,
+        usersCount: 0,
+        progressCount: 0,
+        orgNodesCount: 0,
+        backpackCount: 0,
+        errors: ['Supabase אינו מוגדר'] 
+      };
+    }
+
+    const errors: string[] = [];
+    let tasksSynced = 0;
+    let rolesSynced = 0;
+    let usersSynced = 0;
+    let progressSynced = 0;
+    let orgNodesSynced = 0;
+    let backpackSynced = 0;
+
+    // 1. Roles
+    const validRoles = this.roles.filter((r) => isValidUUID(r.id));
+    if (validRoles.length > 0) {
+      try {
+        const { error } = await supabase.from('roles').upsert(validRoles, { onConflict: 'id' });
+        if (error) errors.push(`תפקידים: ${error.message}`);
+        else rolesSynced = validRoles.length;
+      } catch (err: any) {
+        errors.push(`תפקידים: ${err.message || 'שגיאה'}`);
+      }
+    }
+
+    // 2. Users
+    const validUsers = this.users.filter((u) => isValidUUID(u.id));
+    if (validUsers.length > 0) {
+      try {
+        const { error } = await supabase.from('users').upsert(validUsers, { onConflict: 'id' });
+        if (error) errors.push(`משתמשים: ${error.message}`);
+        else usersSynced = validUsers.length;
+      } catch (err: any) {
+        errors.push(`משתמשים: ${err.message || 'שגיאה'}`);
+      }
+    }
+
+    // 3. Tasks
+    const validRoleIds = new Set(this.roles.map((r) => r.id));
+    const tasksToSync = this.tasks.filter(
+      (task) => isValidUUID(task.id) && isValidUUID(task.role_id) && validRoleIds.has(task.role_id)
+    );
+
+    for (const task of tasksToSync) {
+      try {
+        const { error } = await supabase.from('tasks').upsert({
+          id: task.id,
+          role_id: task.role_id,
+          step_order: task.step_order,
+          title: task.title,
+          description: task.description || '',
+          type: task.type,
+          media_url: task.media_url || null,
+          question_prompt: task.question_prompt || null,
+          hide_from_backpack: Boolean(task.hide_from_backpack),
+          is_standalone_media: Boolean(task.is_standalone_media),
+        }, { onConflict: 'id' });
+
+        if (error) {
+          if (error.code === 'PGRST204') {
+            const { error: retryError } = await supabase.from('tasks').upsert({
+              id: task.id,
+              role_id: task.role_id,
+              step_order: task.step_order,
+              title: task.title,
+              description: task.description || '',
+              type: task.type,
+              media_url: task.media_url || null,
+              question_prompt: task.question_prompt || null,
+            }, { onConflict: 'id' });
+            if (retryError) errors.push(`משימה "${task.title}": ${retryError.message}`);
+            else tasksSynced++;
+          } else {
+            errors.push(`משימה "${task.title}": ${error.message}`);
+          }
+        } else {
+          tasksSynced++;
+        }
+      } catch (err: any) {
+        errors.push(`משימה "${task.title}": ${err.message || 'שגיאה לא ידועה'}`);
+      }
+    }
+
+    // 4. User Task Progress
+    const validTaskIds = new Set(this.tasks.map((t) => t.id));
+    const validUserIds = new Set(this.users.map((u) => u.id));
+    const validProgress = this.progress.filter(
+      (p) => isValidUUID(p.id) && validUserIds.has(p.user_id) && validTaskIds.has(p.task_id)
+    );
+
+    if (validProgress.length > 0) {
+      try {
+        const { error } = await supabase
+          .from('user_task_progress')
+          .upsert(validProgress, { onConflict: 'user_id,task_id' });
+        if (error) errors.push(`התקדמות: ${error.message}`);
+        else progressSynced = validProgress.length;
+      } catch (err: any) {
+        errors.push(`התקדמות: ${err.message || 'שגיאה'}`);
+      }
+    }
+
+    // 5. Backpack Resources
+    const validBackpack = this.backpack.filter((b) => isValidUUID(b.id));
+    if (validBackpack.length > 0) {
+      try {
+        const { error } = await supabase.from('backpack_resources').upsert(validBackpack, { onConflict: 'id' });
+        if (error) errors.push(`משאבי תרמיל: ${error.message}`);
+        else backpackSynced = validBackpack.length;
+      } catch (err: any) {
+        errors.push(`משאבי תרמיל: ${err.message || 'שגיאה'}`);
+      }
+    }
+
+    // 6. Org Nodes
+    const validNodes = this.orgNodes.filter((n) => isValidUUID(n.id));
+    if (validNodes.length > 0) {
+      try {
+        const { error } = await supabase.from('org_nodes').upsert(validNodes, { onConflict: 'id' });
+        if (error) errors.push(`עץ ארגוני: ${error.message}`);
+        else orgNodesSynced = validNodes.length;
+      } catch (err: any) {
+        errors.push(`עץ ארגוני: ${err.message || 'שגיאה'}`);
+      }
+    }
+
+    // 7. Pull back any changes from Supabase
+    await this.syncFromSupabase();
+
+    const total = validRoles.length + validUsers.length + tasksToSync.length + validProgress.length + validBackpack.length + validNodes.length;
+    const synced = rolesSynced + usersSynced + tasksSynced + progressSynced + backpackSynced + orgNodesSynced;
+
+    return {
+      total,
+      synced,
+      tasksCount: tasksSynced,
+      rolesCount: rolesSynced,
+      usersCount: usersSynced,
+      progressCount: progressSynced,
+      orgNodesCount: orgNodesSynced,
+      backpackCount: backpackSynced,
+      errors
+    };
   }
 
   public async syncLocalTasksToSupabase(): Promise<{ total: number; synced: number; errors: string[] }> {

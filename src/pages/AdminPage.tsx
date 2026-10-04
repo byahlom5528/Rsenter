@@ -112,13 +112,13 @@ export const AdminPage: React.FC = () => {
   const handleSyncToSupabase = async () => {
     setIsSyncingSupabase(true);
     try {
-      const res = await db.syncLocalTasksToSupabase();
+      const res = await db.syncAllToSupabase();
       if (res.errors.length === 0) {
-        showStatus(`סנכרון מלא לסופרבייס הושלם בהצלחה! (${res.synced} משימות ופריטי מדיה)`);
+        showStatus(`סנכרון מלא לסופרבייס הושלם בהצלחה! (סונכרנו ${res.synced} פריטים: משימות, תפקידים, משתמשים, התקדמות ועץ ארגוני)`);
       } else if (res.synced > 0) {
-        showStatus(`סונכרנו ${res.synced} מתוך ${res.total} פריטים לסופרבייס. חלק מהפריטים נדחו - יש להריץ את סקריפט ה-SQL בסופרבייס`, 'error');
+        showStatus(`סונכרנו ${res.synced} מתוך ${res.total} פריטים לסופרבייס.`, 'error');
       } else {
-        showStatus(`שגיאה בסנכרון לסופרבייס: יש לוודא שהורץ סקריפט ה-SQL בסופרבייס לעדכון עמודות המדיה`, 'error');
+        showStatus('שגיאה בסנכרון לסופרבייס', 'error');
       }
       await loadAllData(false);
     } catch (err) {
@@ -792,7 +792,7 @@ export const AdminPage: React.FC = () => {
           onClick={handleSyncToSupabase}
           disabled={isSyncingSupabase}
           className="flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-all shadow-xs shrink-0"
-          title="סנכרן את כל המשימות ופריטי המדיה מול בסיס הנתונים Supabase"
+          title="סנכרן את כל נתוני המערכת (משימות, תפקידים, משתמשים, התקדמות ועץ מבנה) מול Supabase"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSupabase ? 'animate-spin text-emerald-600' : 'text-emerald-500'}`} />
           <span>{isSyncingSupabase ? 'מסנכרן...' : 'סנכרון לסופרבייס'}</span>
