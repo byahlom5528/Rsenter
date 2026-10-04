@@ -19,8 +19,8 @@ export function getSimplifiedRoleInterface(
 ): SimplifiedRoleInterface {
   const roleName = userRole?.name || 'חניך';
   const roleId = userRole?.id;
-  const nodeTitle = targetNode.title;
-  const nodeHolder = targetNode.holder_name;
+  const nodeTitle = targetNode?.title || '';
+  const nodeHolder = targetNode?.holder_name || '';
 
   // 1. Is this node the user's own role/position?
   const isMyNode = Boolean(

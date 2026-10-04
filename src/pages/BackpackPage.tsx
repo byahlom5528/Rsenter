@@ -83,7 +83,7 @@ export const BackpackPage: React.FC = () => {
 
   // Filter tasks that have media_url AND are not hidden by admin
   const mediaTasks = useMemo(() => {
-    return tasks.filter((t) => Boolean(t.media_url && t.media_url.trim().length > 0 && !t.hide_from_backpack));
+    return tasks.filter((t) => Boolean(t && typeof t.media_url === 'string' && t.media_url.trim().length > 0 && !t.hide_from_backpack));
   }, [tasks]);
 
   // Search filtering by title
@@ -91,7 +91,7 @@ export const BackpackPage: React.FC = () => {
     const term = searchTerm.trim().toLowerCase();
     return mediaTasks.filter((task) => {
       if (!term) return true;
-      return task.title.toLowerCase().includes(term);
+      return (task.title || '').toLowerCase().includes(term);
     });
   }, [mediaTasks, searchTerm]);
 
@@ -284,6 +284,7 @@ export const BackpackPage: React.FC = () => {
                                 src={mediaInfo.embedUrl}
                                 title={task.title}
                                 className="w-full h-full border-0"
+                                loading="lazy"
                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                                 allowFullScreen
                               ></iframe>
@@ -425,6 +426,7 @@ export const BackpackPage: React.FC = () => {
                             src={mediaInfo.embedUrl}
                             title={previewTask.title}
                             className="w-full h-full border-0"
+                            loading="lazy"
                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                             allowFullScreen
                           ></iframe>

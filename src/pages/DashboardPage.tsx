@@ -31,6 +31,7 @@ import {
   parseBinaryAnswers, 
   serializeBinaryAnswers 
 } from '../utils/binaryQuestions';
+import { safeScrollIntoView } from '../utils/scrollUtils';
 
 export const DashboardPage: React.FC = () => {
   const { currentUser, currentRole, isAdmin, refreshUserData } = useAuth();
@@ -119,6 +120,7 @@ export const DashboardPage: React.FC = () => {
   }, [currentUser]);
 
   const isTaskExpanded = (task: TaskWithProgress): boolean => {
+    if (!task) return false;
     if (task.id in expandedTaskIds) {
       return expandedTaskIds[task.id];
     }
@@ -167,9 +169,9 @@ export const DashboardPage: React.FC = () => {
       const timer = setTimeout(() => {
         const activeElement = document.getElementById('active-task-card');
         if (activeElement) {
-          activeElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          safeScrollIntoView(activeElement, 80);
         }
-      }, 220);
+      }, 250);
       return () => clearTimeout(timer);
     }
   }, [isLoading, tasksWithProgress]);
@@ -191,8 +193,10 @@ export const DashboardPage: React.FC = () => {
   const calculateDaysInRole = () => {
     if (!currentUser?.entry_date) return 1;
     const entry = new Date(currentUser.entry_date);
+    if (isNaN(entry.getTime())) return 1;
     const now = new Date();
     const diff = Math.floor((now.getTime() - entry.getTime()) / (1000 * 3600 * 24));
+    if (isNaN(diff)) return 1;
     return Math.max(1, diff);
   };
 
@@ -248,7 +252,7 @@ export const DashboardPage: React.FC = () => {
         setTimeout(() => {
           const nextActive = document.getElementById('active-task-card');
           if (nextActive) {
-            nextActive.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            safeScrollIntoView(nextActive, 80);
           }
         }, 250);
       } catch (err) {
@@ -290,7 +294,7 @@ export const DashboardPage: React.FC = () => {
       setTimeout(() => {
         const nextActive = document.getElementById('active-task-card');
         if (nextActive) {
-          nextActive.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          safeScrollIntoView(nextActive, 80);
         }
       }, 250);
     } catch (err) {
@@ -644,11 +648,15 @@ export const DashboardPage: React.FC = () => {
 
                   {/* Left side (RTL end): Completion date + Chevron toggle */}
                   <div className="flex items-center gap-2 shrink-0">
-                    {isCompleted && task.progress?.completed_at && (
-                      <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg font-medium hidden sm:inline-block">
-                        הושלם ב-{new Date(task.progress.completed_at).toLocaleDateString('he-IL')}
-                      </span>
-                    )}
+                    {isCompleted && task.progress?.completed_at && (() => {
+                      const completedDate = new Date(task.progress.completed_at);
+                      if (isNaN(completedDate.getTime())) return null;
+                      return (
+                        <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2 py-0.5 rounded-lg font-medium hidden sm:inline-block">
+                          הושלם ב-{completedDate.toLocaleDateString('he-IL')}
+                        </span>
+                      );
+                    })()}
 
                     <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
                       isActive 
@@ -697,6 +705,7 @@ export const DashboardPage: React.FC = () => {
                                 src={mediaInfo.embedUrl}
                                 title={task.title}
                                 className="w-full h-full border-0"
+                                loading="lazy"
                                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                                 allowFullScreen
                               ></iframe>

@@ -667,9 +667,9 @@ export const AdminPage: React.FC = () => {
     if (!term) return userOverviews;
     return userOverviews.filter((item) => {
       return (
-        item.user.full_name.toLowerCase().includes(term) ||
-        item.user.personal_id.includes(term) ||
-        (item.role?.name.toLowerCase().includes(term) ?? false)
+        (item.user?.full_name || '').toLowerCase().includes(term) ||
+        (item.user?.personal_id || '').includes(term) ||
+        Boolean(item.role?.name && item.role.name.toLowerCase().includes(term))
       );
     });
   }, [userOverviews, userSearchTerm]);

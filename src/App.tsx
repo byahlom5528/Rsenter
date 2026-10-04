@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Layout } from './components/layout/Layout';
 import { EntryPage } from './pages/EntryPage';
+import { ScrollToTop } from './components/common/ScrollToTop';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
 // Code-split pages for high performance and fast initial load
 const RegisterPage = lazy(() => import('./pages/RegisterPage').then((m) => ({ default: m.RegisterPage })));
@@ -52,52 +54,55 @@ export const App: React.FC = () => {
   return (
     <AuthProvider>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <Layout>
-          <Suspense fallback={<LoadingSpinner />}>
-            <Routes>
-              <Route path="/" element={<EntryPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              
-              <Route
-                path="/dashboard"
-                element={
-                  <ProtectedRoute>
-                    <DashboardPage />
-                  </ProtectedRoute>
-                }
-              />
+        <ScrollToTop />
+        <ErrorBoundary>
+          <Layout>
+            <Suspense fallback={<LoadingSpinner />}>
+              <Routes>
+                <Route path="/" element={<EntryPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                
+                <Route
+                  path="/dashboard"
+                  element={
+                    <ProtectedRoute>
+                      <DashboardPage />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="/backpack"
-                element={
-                  <ProtectedRoute>
-                    <BackpackPage />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="/backpack"
+                  element={
+                    <ProtectedRoute>
+                      <BackpackPage />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="/org-tree"
-                element={
-                  <ProtectedRoute>
-                    <OrgTreePage />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="/org-tree"
+                  element={
+                    <ProtectedRoute>
+                      <OrgTreePage />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="/admin"
-                element={
-                  <AdminRoute>
-                    <AdminPage />
-                  </AdminRoute>
-                }
-              />
+                <Route
+                  path="/admin"
+                  element={
+                    <AdminRoute>
+                      <AdminPage />
+                    </AdminRoute>
+                  }
+                />
 
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </Suspense>
-        </Layout>
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </Suspense>
+          </Layout>
+        </ErrorBoundary>
       </BrowserRouter>
     </AuthProvider>
   );

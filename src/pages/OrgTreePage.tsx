@@ -388,10 +388,11 @@ export const OrgTreePage: React.FC = () => {
   /* Helper to render a single node card */
   const renderNodeCard = (node: TreeNode, level: number) => {
     const isSelected = selectedNode?.id === node.id;
-    const isMatch = searchTerm.trim() !== '' && (
-      node.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      node.holder_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      node.description.toLowerCase().includes(searchTerm.toLowerCase())
+    const term = searchTerm.trim().toLowerCase();
+    const isMatch = term !== '' && (
+      (node.title || '').toLowerCase().includes(term) ||
+      (node.holder_name || '').toLowerCase().includes(term) ||
+      (node.description || '').toLowerCase().includes(term)
     );
 
     // Balanced width per tier ensuring the full tree fits naturally on screen

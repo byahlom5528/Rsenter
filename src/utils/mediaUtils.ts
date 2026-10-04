@@ -18,7 +18,7 @@ export interface MediaEmbedInfo {
  * - Standard web links / docs
  */
 export function getMediaInfo(url?: string | null): MediaEmbedInfo {
-  if (!url || !url.trim()) {
+  if (!url || typeof url !== 'string' || !url.trim()) {
     return { type: 'empty', embedUrl: null, rawUrl: '' };
   }
 
@@ -94,7 +94,7 @@ export function getMediaInfo(url?: string | null): MediaEmbedInfo {
  * Prevents relative route navigation bugs when opening external links.
  */
 export function ensureValidUrl(url?: string | null): string {
-  if (!url || !url.trim()) return '#';
+  if (!url || typeof url !== 'string' || !url.trim()) return '#';
   const trimmed = url.trim();
   if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('mailto:') || trimmed.startsWith('tel:')) {
     return trimmed;

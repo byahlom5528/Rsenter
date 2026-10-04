@@ -59,7 +59,9 @@ function sanitizeToUUID(rawId: string): string {
 function getStored<T>(key: string, fallback: T): T {
   try {
     const item = localStorage.getItem(key);
-    return item ? JSON.parse(item) : fallback;
+    if (!item) return fallback;
+    const parsed = JSON.parse(item);
+    return parsed !== null && parsed !== undefined ? parsed : fallback;
   } catch (e) {
     console.error(`Error reading ${key} from localStorage:`, e);
     return fallback;
@@ -569,9 +571,10 @@ class DBService {
 
   // ==================== TASKS ====================
   async getTasksByRole(roleId: string): Promise<Task[]> {
-    return this.tasks
-      .filter((t) => t.role_id === roleId)
-      .sort((a, b) => a.step_order - b.step_order);
+    if (!roleId) return [];
+    return (this.tasks || [])
+      .filter((t) => t && t.role_id === roleId)
+      .sort((a, b) => (a.step_order || 0) - (b.step_order || 0));
   }
 
   async getAllTasks(): Promise<Task[]> {
@@ -906,7 +909,8 @@ class DBService {
   }
 
   async getUserProgress(userId: string): Promise<UserTaskProgress[]> {
-    return this.progress.filter((p) => p.user_id === userId);
+    if (!userId) return [];
+    return (this.progress || []).filter((p) => p && p.user_id === userId);
   }
 
   async completeTask(userId: string, taskId: string, answerText?: string): Promise<UserTaskProgress> {
