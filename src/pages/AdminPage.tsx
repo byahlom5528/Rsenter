@@ -132,6 +132,7 @@ export const AdminPage: React.FC = () => {
   const loadAllData = async (showSpinner = false) => {
     if (showSpinner) setIsLoading(true);
     try {
+      await db.syncFromSupabase();
       const [overviews, allRoles, nodes] = await Promise.all([
         db.getAllUsersProgressOverview(),
         db.getRoles(),
@@ -328,6 +329,10 @@ export const AdminPage: React.FC = () => {
 
     const [movedTask] = newTasks.splice(index, 1);
     newTasks.splice(targetIndex, 0, movedTask);
+
+    // Optimistically update local view for instantaneous responsiveness
+    const optimisticTasks = newTasks.map((t, idx) => ({ ...t, step_order: idx + 1 }));
+    setCurrentRoleTasks(optimisticTasks);
 
     const taskIds = newTasks.map((t) => t.id);
     const updated = await db.reorderTasks(selectedRoleId, taskIds);

@@ -84,6 +84,7 @@ export const OrgTreePage: React.FC = () => {
   };
 
   useEffect(() => {
+    db.syncFromSupabase();
     loadOrgData();
     const unsubscribe = db.subscribe(loadOrgData);
     return () => {
@@ -116,7 +117,7 @@ export const OrgTreePage: React.FC = () => {
   const toggleFaq = (index: number) => {
     setOpenFaqIndices((prev) => ({
       ...prev,
-      [index]: !prev[index]
+      [index]: !(prev[index] ?? true)
     }));
   };
 

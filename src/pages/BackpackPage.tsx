@@ -33,6 +33,7 @@ export const BackpackPage: React.FC = () => {
   useEffect(() => {
     const initRoles = async () => {
       try {
+        await db.syncFromSupabase();
         const allRoles = await db.getRoles();
         setRoles(allRoles);
 

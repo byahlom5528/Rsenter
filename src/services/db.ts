@@ -86,6 +86,8 @@ class DBService {
   private listeners: Set<() => void> = new Set();
   
   private isSyncing = false;
+  private realtimeChannel: any = null;
+  private syncDebounceTimer: any = null;
 
   constructor() {
     this.init();
@@ -168,6 +170,59 @@ class DBService {
 
     // Initial background sync from Supabase
     this.syncFromSupabase();
+
+    // Setup real-time updates and window focus / network recovery triggers
+    this.setupRealtimeSubscription();
+  }
+
+  public triggerDebouncedSync() {
+    if (this.syncDebounceTimer) {
+      clearTimeout(this.syncDebounceTimer);
+    }
+    this.syncDebounceTimer = setTimeout(() => {
+      this.syncDebounceTimer = null;
+      this.syncFromSupabase();
+    }, 300);
+  }
+
+  private setupRealtimeSubscription() {
+    if (!isSupabaseConfigured || !supabase) return;
+    if (this.realtimeChannel) return;
+
+    try {
+      this.realtimeChannel = supabase
+        .channel('app-db-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, () => {
+          this.triggerDebouncedSync();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'user_task_progress' }, () => {
+          this.triggerDebouncedSync();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'roles' }, () => {
+          this.triggerDebouncedSync();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => {
+          this.triggerDebouncedSync();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'backpack_resources' }, () => {
+          this.triggerDebouncedSync();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'org_nodes' }, () => {
+          this.triggerDebouncedSync();
+        })
+        .subscribe();
+
+      if (typeof window !== 'undefined') {
+        window.addEventListener('focus', () => {
+          this.triggerDebouncedSync();
+        });
+        window.addEventListener('online', () => {
+          this.triggerDebouncedSync();
+        });
+      }
+    } catch (err) {
+      console.warn('Realtime channel subscription error:', err);
+    }
   }
 
   public async syncFromSupabase(): Promise<void> {
@@ -204,21 +259,25 @@ class DBService {
         changed = true;
       }
       if (!tasksRes.error && tasksRes.data && tasksRes.data.length > 0) {
+        const initialTaskIds = new Set(INITIAL_TASKS.map((it) => it.id));
+        const validRoleIds = new Set(this.roles.map((r) => r.id));
         const localTaskMap = new Map(this.tasks.map((t) => [t.id, t]));
         const supabaseTaskIds = new Set(tasksRes.data.map((t: any) => t.id));
 
-        const updatedTasks = (tasksRes.data as any[]).map((st) => {
-          const local = localTaskMap.get(st.id);
-          return {
-            ...st,
-            hide_from_backpack: st.hide_from_backpack !== undefined ? Boolean(st.hide_from_backpack) : Boolean(local?.hide_from_backpack),
-            is_standalone_media: st.is_standalone_media !== undefined ? Boolean(st.is_standalone_media) : Boolean(local?.is_standalone_media),
-          } as Task;
-        });
+        const updatedTasks = (tasksRes.data as any[])
+          .filter((st) => !st.role_id || validRoleIds.has(st.role_id))
+          .map((st) => {
+            const local = localTaskMap.get(st.id);
+            return {
+              ...st,
+              hide_from_backpack: st.hide_from_backpack !== undefined ? Boolean(st.hide_from_backpack) : Boolean(local?.hide_from_backpack),
+              is_standalone_media: st.is_standalone_media !== undefined ? Boolean(st.is_standalone_media) : Boolean(local?.is_standalone_media),
+            } as Task;
+          });
 
-        // Retain any locally added tasks/media not yet in Supabase
+        // Retain any genuine locally added tasks that are NOT dummy initial tasks and belong to a valid active role
         this.tasks.forEach((lt) => {
-          if (!supabaseTaskIds.has(lt.id)) {
+          if (!supabaseTaskIds.has(lt.id) && !initialTaskIds.has(lt.id) && validRoleIds.has(lt.role_id)) {
             updatedTasks.push(lt);
           }
         });
@@ -286,19 +345,24 @@ class DBService {
     return [...this.roles];
   }
 
-  async getRoleById(id: string): Promise<Role | null> {
-    const local = this.roles.find((r) => r.id === id);
-    if (local) return local;
+  async getRoleById(id: string, forceCloud = false): Promise<Role | null> {
+    if (!forceCloud) {
+      const local = this.roles.find((r) => r.id === id);
+      if (local) return local;
+    }
 
     if (isSupabaseConfigured && supabase && isValidUUID(id)) {
       try {
         const { data, error } = await supabase.from('roles').select('*').eq('id', id).single();
         if (!error && data) {
           const role = data as Role;
-          if (!this.roles.some((r) => r.id === role.id)) {
+          const idx = this.roles.findIndex((r) => r.id === role.id);
+          if (idx !== -1) {
+            this.roles[idx] = role;
+          } else {
             this.roles.push(role);
-            this.saveAll();
           }
+          this.saveAll();
           return role;
         }
       } catch (e) {
@@ -306,7 +370,7 @@ class DBService {
       }
     }
 
-    return null;
+    return this.roles.find((r) => r.id === id) || null;
   }
 
   async createRole(roleData: Omit<Role, 'id' | 'created_at'>): Promise<Role> {
@@ -337,7 +401,7 @@ class DBService {
   }
 
   async updateRole(id: string, updateData: Partial<Role>): Promise<Role | null> {
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && isValidUUID(id)) {
       try {
         const { data, error } = await supabase
           .from('roles')
@@ -369,10 +433,19 @@ class DBService {
   }
 
   async deleteRole(id: string): Promise<boolean> {
+    if (!isValidUUID(id)) return false;
+
     const deletedTaskIds = this.tasks.filter((t) => t.role_id === id).map((t) => t.id);
 
     if (isSupabaseConfigured && supabase) {
       try {
+        // Cascade delete dependent progress and tasks first to respect foreign keys
+        if (deletedTaskIds.length > 0) {
+          await supabase.from('user_task_progress').delete().in('task_id', deletedTaskIds);
+        }
+        await supabase.from('tasks').delete().eq('role_id', id);
+        await supabase.from('users').update({ role_id: null }).eq('role_id', id);
+
         const { error } = await supabase.from('roles').delete().eq('id', id);
         if (!error) {
           this.roles = this.roles.filter((r) => r.id !== id);
@@ -399,19 +472,24 @@ class DBService {
   }
 
   // ==================== USERS & AUTH ====================
-  async getUserByPersonalId(personalId: string): Promise<User | null> {
-    const local = this.users.find((u) => u.personal_id === personalId);
-    if (local) return local;
+  async getUserByPersonalId(personalId: string, forceCloud = false): Promise<User | null> {
+    if (!forceCloud) {
+      const local = this.users.find((u) => u.personal_id === personalId);
+      if (local) return local;
+    }
 
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase.from('users').select('*').eq('personal_id', personalId).single();
         if (!error && data) {
           const user = data as User;
-          if (!this.users.some((u) => u.id === user.id)) {
+          const idx = this.users.findIndex((u) => u.id === user.id);
+          if (idx !== -1) {
+            this.users[idx] = user;
+          } else {
             this.users.push(user);
-            this.saveAll();
           }
+          this.saveAll();
           return user;
         }
       } catch (e) {
@@ -419,22 +497,27 @@ class DBService {
       }
     }
 
-    return null;
+    return this.users.find((u) => u.personal_id === personalId) || null;
   }
 
-  async getUserById(id: string): Promise<User | null> {
-    const local = this.users.find((u) => u.id === id);
-    if (local) return local;
+  async getUserById(id: string, forceCloud = false): Promise<User | null> {
+    if (!forceCloud) {
+      const local = this.users.find((u) => u.id === id);
+      if (local) return local;
+    }
 
     if (isSupabaseConfigured && supabase && isValidUUID(id)) {
       try {
         const { data, error } = await supabase.from('users').select('*').eq('id', id).single();
         if (!error && data) {
           const user = data as User;
-          if (!this.users.some((u) => u.id === user.id)) {
+          const idx = this.users.findIndex((u) => u.id === user.id);
+          if (idx !== -1) {
+            this.users[idx] = user;
+          } else {
             this.users.push(user);
-            this.saveAll();
           }
+          this.saveAll();
           return user;
         }
       } catch (e) {
@@ -442,7 +525,7 @@ class DBService {
       }
     }
 
-    return null;
+    return this.users.find((u) => u.id === id) || null;
   }
 
   async getAllUsers(): Promise<User[]> {
@@ -539,6 +622,8 @@ class DBService {
   }
 
   async deleteUser(userId: string): Promise<boolean> {
+    if (!isValidUUID(userId)) return false;
+
     if (isSupabaseConfigured && supabase) {
       try {
         await supabase.from('user_task_progress').delete().eq('user_id', userId);
@@ -587,6 +672,7 @@ class DBService {
 
     const newTask: Task = {
       ...taskData,
+      description: taskData.description || '',
       media_url: taskData.media_url?.trim() || null,
       question_prompt: taskData.question_prompt?.trim() || null,
       step_order: stepOrder,
@@ -594,28 +680,20 @@ class DBService {
       created_at: new Date().toISOString(),
     };
 
+    let createdTask = newTask;
+
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase.from('tasks').insert([newTask]).select().single();
         if (!error && data) {
-          this.tasks.push(data as Task);
-          await this.normalizeTaskStepsForRole(data.role_id);
-          this.saveAll();
-          this.notify();
-          return data as Task;
+          createdTask = data as Task;
         } else if (error) {
           console.warn('Supabase createTask error:', error);
-          // If schema cache doesn't have the new columns yet (PGRST204), try inserting with basic columns
           if (error.code === 'PGRST204') {
             const { hide_from_backpack, is_standalone_media, ...basicTask } = newTask;
             const retryRes = await supabase.from('tasks').insert([basicTask]).select().single();
             if (!retryRes.error && retryRes.data) {
-              const merged = { ...retryRes.data, hide_from_backpack, is_standalone_media } as Task;
-              this.tasks.push(merged);
-              await this.normalizeTaskStepsForRole(merged.role_id);
-              this.saveAll();
-              this.notify();
-              return merged;
+              createdTask = { ...retryRes.data, hide_from_backpack, is_standalone_media } as Task;
             }
           }
         }
@@ -624,37 +702,49 @@ class DBService {
       }
     }
 
-    // Local state fallback
-    this.tasks.push(newTask);
-    await this.normalizeTaskStepsForRole(newTask.role_id);
+    this.tasks.push(createdTask);
+    await this.normalizeTaskStepsForRole(createdTask.role_id);
 
     // Auto add progress row for users with this role (only for onboarding tasks)
-    if (!newTask.is_standalone_media) {
-      const relevantUsers = this.users.filter((u) => u.role_id === newTask.role_id);
+    if (!createdTask.is_standalone_media) {
+      const relevantUsers = this.users.filter((u) => u.role_id === createdTask.role_id);
+      const newProgressRows: UserTaskProgress[] = [];
+
       for (const u of relevantUsers) {
-        const exists = this.progress.some((p) => p.user_id === u.id && p.task_id === newTask.id);
+        const exists = this.progress.some((p) => p.user_id === u.id && p.task_id === createdTask.id);
         if (!exists) {
-          this.progress.push({
+          const row: UserTaskProgress = {
             id: generateUUID(),
             user_id: u.id,
-            task_id: newTask.id,
+            task_id: createdTask.id,
             is_completed: false,
             answer_text: null,
             completed_at: null,
             created_at: new Date().toISOString(),
-          });
+          };
+          this.progress.push(row);
+          newProgressRows.push(row);
+        }
+      }
+
+      if (newProgressRows.length > 0 && isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('user_task_progress').upsert(newProgressRows, { onConflict: 'user_id,task_id' });
+        } catch (err) {
+          console.warn('Supabase auto add progress rows error', err);
         }
       }
     }
 
     this.saveAll();
     this.notify();
-    return newTask;
+    return createdTask;
   }
 
   async updateTask(id: string, updateData: Partial<Task>): Promise<Task | null> {
     const cleanUpdate = {
       ...updateData,
+      description: updateData.description !== undefined ? (updateData.description || '') : undefined,
       media_url: updateData.media_url !== undefined ? (updateData.media_url?.trim() || null) : undefined,
       question_prompt: updateData.question_prompt !== undefined ? (updateData.question_prompt?.trim() || null) : undefined,
     };
@@ -723,8 +813,14 @@ class DBService {
 
     let synced = 0;
     const errors: string[] = [];
+    const validRoleIds = new Set(this.roles.map((r) => r.id));
 
-    for (const task of this.tasks) {
+    // Only sync valid tasks that belong to existing roles and are valid UUIDs
+    const tasksToSync = this.tasks.filter(
+      (task) => isValidUUID(task.id) && isValidUUID(task.role_id) && validRoleIds.has(task.role_id)
+    );
+
+    for (const task of tasksToSync) {
       try {
         const { error } = await supabase.from('tasks').upsert({
           id: task.id,
@@ -740,7 +836,6 @@ class DBService {
         });
 
         if (error) {
-          // If columns don't exist yet, retry with standard columns
           if (error.code === 'PGRST204') {
             const { error: retryError } = await supabase.from('tasks').upsert({
               id: task.id,
@@ -768,15 +863,18 @@ class DBService {
       }
     }
 
-    return { total: this.tasks.length, synced, errors };
+    return { total: tasksToSync.length, synced, errors };
   }
 
   async deleteTask(id: string): Promise<boolean> {
+    if (!isValidUUID(id)) return false;
+
     const targetTask = this.tasks.find((t) => t.id === id);
     const roleId = targetTask?.role_id;
 
-    if (isSupabaseConfigured && supabase && isValidUUID(id)) {
+    if (isSupabaseConfigured && supabase) {
       try {
+        await supabase.from('user_task_progress').delete().eq('task_id', id);
         const { error } = await supabase.from('tasks').delete().eq('id', id);
         if (!error) {
           this.tasks = this.tasks.filter((t) => t.id !== id);
@@ -817,19 +915,16 @@ class DBService {
     this.saveAll();
 
     if (isSupabaseConfigured && supabase) {
+      const client = supabase;
       try {
-        for (let i = 0; i < tasksForRole.length; i++) {
-          const t = tasksForRole[i];
-          if (isValidUUID(t.id)) {
-            await supabase.from('tasks').update({ step_order: 1000 + i }).eq('id', t.id);
-          }
-        }
-        for (let i = 0; i < tasksForRole.length; i++) {
-          const t = tasksForRole[i];
-          if (isValidUUID(t.id)) {
-            await supabase.from('tasks').update({ step_order: i + 1 }).eq('id', t.id);
-          }
-        }
+        await Promise.all(
+          tasksForRole.map((t, idx) => {
+            if (isValidUUID(t.id)) {
+              return client.from('tasks').update({ step_order: idx + 1 }).eq('id', t.id);
+            }
+            return Promise.resolve();
+          })
+        );
       } catch (e) {
         console.warn('Supabase normalizeTaskSteps error', e);
       }
@@ -848,19 +943,16 @@ class DBService {
     this.notify();
 
     if (isSupabaseConfigured && supabase) {
+      const client = supabase;
       try {
-        for (let i = 0; i < orderedTaskIds.length; i++) {
-          const taskId = orderedTaskIds[i];
-          if (isValidUUID(taskId)) {
-            await supabase.from('tasks').update({ step_order: 1000 + i }).eq('id', taskId);
-          }
-        }
-        for (let i = 0; i < orderedTaskIds.length; i++) {
-          const taskId = orderedTaskIds[i];
-          if (isValidUUID(taskId)) {
-            await supabase.from('tasks').update({ step_order: i + 1 }).eq('id', taskId);
-          }
-        }
+        await Promise.all(
+          orderedTaskIds.map((taskId, idx) => {
+            if (isValidUUID(taskId)) {
+              return client.from('tasks').update({ step_order: idx + 1 }).eq('id', taskId);
+            }
+            return Promise.resolve();
+          })
+        );
       } catch (e) {
         console.warn('Supabase reorderTasks error', e);
       }
@@ -876,6 +968,8 @@ class DBService {
       .sort((a, b) => a.step_order - b.step_order);
     
     let added = false;
+    const newProgressRows: UserTaskProgress[] = [];
+
     for (const task of roleTasks) {
       const exists = this.progress.some((p) => p.user_id === userId && p.task_id === task.id);
       if (!exists) {
@@ -890,15 +984,16 @@ class DBService {
         };
 
         this.progress.push(newProgressRow);
+        newProgressRows.push(newProgressRow);
         added = true;
+      }
+    }
 
-        if (isSupabaseConfigured && supabase) {
-          try {
-            await supabase.from('user_task_progress').insert([newProgressRow]);
-          } catch (e) {
-            console.warn('Supabase insert user_task_progress notice', e);
-          }
-        }
+    if (newProgressRows.length > 0 && isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('user_task_progress').upsert(newProgressRows, { onConflict: 'user_id,task_id' });
+      } catch (e) {
+        console.warn('Supabase batch insert user_task_progress notice', e);
       }
     }
 
@@ -939,14 +1034,23 @@ class DBService {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        await supabase.from('user_task_progress').upsert({
-          id: record.id,
-          user_id: userId,
-          task_id: taskId,
-          is_completed: true,
-          answer_text: record.answer_text,
-          completed_at: now,
-        }, { onConflict: 'user_id,task_id' });
+        const { data, error } = await supabase
+          .from('user_task_progress')
+          .upsert({
+            id: record.id,
+            user_id: userId,
+            task_id: taskId,
+            is_completed: true,
+            answer_text: record.answer_text,
+            completed_at: now,
+          }, { onConflict: 'user_id,task_id' })
+          .select()
+          .single();
+
+        if (!error && data && data.id) {
+          record.id = data.id;
+          this.saveAll();
+        }
       } catch (e) {
         console.warn('Supabase completeTask notice', e);
       }
@@ -980,13 +1084,22 @@ class DBService {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        await supabase.from('user_task_progress').upsert({
-          id: record.id,
-          user_id: userId,
-          task_id: taskId,
-          is_completed: isCompleted,
-          completed_at: isCompleted ? now : null,
-        }, { onConflict: 'user_id,task_id' });
+        const { data, error } = await supabase
+          .from('user_task_progress')
+          .upsert({
+            id: record.id,
+            user_id: userId,
+            task_id: taskId,
+            is_completed: isCompleted,
+            completed_at: isCompleted ? now : null,
+          }, { onConflict: 'user_id,task_id' })
+          .select()
+          .single();
+
+        if (!error && data && data.id) {
+          record.id = data.id;
+          this.saveAll();
+        }
       } catch (e) {
         console.warn('Supabase toggleTaskCompletion notice', e);
       }
@@ -1006,7 +1119,7 @@ class DBService {
     this.saveAll();
     this.notify();
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && isValidUUID(userId)) {
       try {
         await supabase.from('user_task_progress').delete().eq('user_id', userId);
         if (user && user.role_id) {
@@ -1053,14 +1166,23 @@ class DBService {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        await supabase.from('user_task_progress').upsert({
-          id: record.id,
-          user_id: record.user_id,
-          task_id: record.task_id,
-          is_completed: record.is_completed,
-          answer_text: record.answer_text,
-          completed_at: record.completed_at,
-        }, { onConflict: 'user_id,task_id' });
+        const { data, error } = await supabase
+          .from('user_task_progress')
+          .upsert({
+            id: record.id,
+            user_id: record.user_id,
+            task_id: record.task_id,
+            is_completed: record.is_completed,
+            answer_text: record.answer_text,
+            completed_at: record.completed_at,
+          }, { onConflict: 'user_id,task_id' })
+          .select()
+          .single();
+
+        if (!error && data && data.id) {
+          record.id = data.id;
+          this.saveAll();
+        }
       } catch (e) {
         console.warn('Supabase saveTaskProgress notice', e);
       }
@@ -1125,7 +1247,7 @@ class DBService {
       cleanUpdate.external_link = updateData.external_link || mediaUrl;
     }
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && isValidUUID(id)) {
       try {
         const { data, error } = await supabase
           .from('backpack_resources')
@@ -1157,6 +1279,8 @@ class DBService {
   }
 
   async deleteBackpackResource(id: string): Promise<boolean> {
+    if (!isValidUUID(id)) return false;
+
     if (isSupabaseConfigured && supabase) {
       try {
         const { error } = await supabase.from('backpack_resources').delete().eq('id', id);
@@ -1246,7 +1370,7 @@ class DBService {
       parent_id: targetParent,
     };
 
-    if (isSupabaseConfigured && supabase) {
+    if (isSupabaseConfigured && supabase && isValidUUID(id)) {
       try {
         const { data, error } = await supabase
           .from('org_nodes')
@@ -1281,6 +1405,8 @@ class DBService {
   }
 
   async deleteOrgNode(id: string): Promise<boolean> {
+    if (!isValidUUID(id)) return false;
+
     const targetNode = this.orgNodes.find((n) => n.id === id);
     const newParent = targetNode ? targetNode.parent_id : null;
 

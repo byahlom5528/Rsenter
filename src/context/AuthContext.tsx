@@ -83,7 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const fetchRoleForUser = async (user: User): Promise<Role | null> => {
     if (user.role_id) {
-      const role = await db.getRoleById(user.role_id);
+      const role = await db.getRoleById(user.role_id, true);
       setCurrentRole(role);
       if (role) {
         localStorage.setItem(CURRENT_ROLE_DATA_KEY, JSON.stringify(role));
@@ -102,8 +102,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentUser) return;
     try {
       const freshUser = 
-        (await db.getUserById(currentUser.id)) || 
-        (await db.getUserByPersonalId(currentUser.personal_id));
+        (await db.getUserById(currentUser.id, true)) || 
+        (await db.getUserByPersonalId(currentUser.personal_id, true));
       
       if (freshUser) {
         setCurrentUser(freshUser);
@@ -153,7 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithPersonalId = async (personalId: string) => {
     // 1. Check if Admin code
     if (personalId === '0000000') {
-      let adminUser = await db.getUserByPersonalId('0000000');
+      let adminUser = await db.getUserByPersonalId('0000000', true);
       if (!adminUser) {
         // Create admin user if not exists
         adminUser = await db.createUser({
@@ -171,9 +171,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true, isAdmin: true };
     }
 
-    // 2. Check if user exists
-    const existingUser = await db.getUserByPersonalId(personalId);
+    // 2. Check if user exists (check cloud first to ensure multi-device sync)
+    const existingUser = await db.getUserByPersonalId(personalId, true);
     if (existingUser) {
+      if (existingUser.role_id) {
+        await db.initializeUserProgress(existingUser.id, existingUser.role_id);
+      }
       setCurrentUser(existingUser);
       const role = await fetchRoleForUser(existingUser);
       persistSession(existingUser, role);

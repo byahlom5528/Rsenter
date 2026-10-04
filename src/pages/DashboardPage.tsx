@@ -114,6 +114,7 @@ export const DashboardPage: React.FC = () => {
   };
 
   useEffect(() => {
+    db.syncFromSupabase();
     loadDashboardData();
     const unsubscribe = db.subscribe(loadDashboardData);
     return () => unsubscribe();
@@ -246,7 +247,16 @@ export const DashboardPage: React.FC = () => {
         await db.completeTask(currentUser.id, task.id, serializeBinaryAnswers(currentTaskAnswers));
         triggerConfetti();
         setEditingAnswerTaskId(null);
-        setExpandedTaskIds((prev) => ({ ...prev, [task.id]: false }));
+
+        const currentIndex = tasksWithProgress.findIndex((t) => t.id === task.id);
+        const nextTask = currentIndex >= 0 && currentIndex + 1 < tasksWithProgress.length ? tasksWithProgress[currentIndex + 1] : null;
+
+        setExpandedTaskIds((prev) => ({
+          ...prev,
+          [task.id]: false,
+          ...(nextTask ? { [nextTask.id]: true } : {})
+        }));
+
         await loadDashboardData();
         await refreshUserData();
         setTimeout(() => {
@@ -288,7 +298,16 @@ export const DashboardPage: React.FC = () => {
       await db.completeTask(currentUser.id, task.id, hasQuestion ? (currentAnswer.trim() || undefined) : undefined);
       triggerConfetti();
       setEditingAnswerTaskId(null);
-      setExpandedTaskIds((prev) => ({ ...prev, [task.id]: false }));
+
+      const currentIndex = tasksWithProgress.findIndex((t) => t.id === task.id);
+      const nextTask = currentIndex >= 0 && currentIndex + 1 < tasksWithProgress.length ? tasksWithProgress[currentIndex + 1] : null;
+
+      setExpandedTaskIds((prev) => ({
+        ...prev,
+        [task.id]: false,
+        ...(nextTask ? { [nextTask.id]: true } : {})
+      }));
+
       await loadDashboardData();
       await refreshUserData();
       setTimeout(() => {
