@@ -94,6 +94,17 @@ class DBService {
   }
 
   private init() {
+    const APP_VERSION = 'v2.1.0';
+    const VERSION_KEY = 'onboarding_cache_version';
+    if (typeof localStorage !== 'undefined') {
+      const storedVer = localStorage.getItem(VERSION_KEY);
+      if (storedVer !== APP_VERSION) {
+        localStorage.removeItem(STORAGE_KEYS.TASKS);
+        localStorage.removeItem(STORAGE_KEYS.PROGRESS);
+        localStorage.setItem(VERSION_KEY, APP_VERSION);
+      }
+    }
+
     if (!localStorage.getItem(STORAGE_KEYS.ROLES)) {
       this.resetToDefaults();
     } else {
@@ -162,6 +173,16 @@ class DBService {
           }
         }
       });
+
+      // Clean up stale deleted tasks (e.g. "סרטון מפקד")
+      const staleTaskIds = new Set(
+        this.tasks.filter((t) => t.title?.includes('סרטון מפקד')).map((t) => t.id)
+      );
+      if (staleTaskIds.size > 0) {
+        this.tasks = this.tasks.filter((t) => !staleTaskIds.has(t.id));
+        this.progress = this.progress.filter((p) => !staleTaskIds.has(p.task_id));
+        needsSave = true;
+      }
 
       if (needsSave) {
         this.saveAll();
@@ -259,10 +280,8 @@ class DBService {
         changed = true;
       }
       if (!tasksRes.error && tasksRes.data && tasksRes.data.length > 0) {
-        const initialTaskIds = new Set(INITIAL_TASKS.map((it) => it.id));
         const validRoleIds = new Set(this.roles.map((r) => r.id));
         const localTaskMap = new Map(this.tasks.map((t) => [t.id, t]));
-        const supabaseTaskIds = new Set(tasksRes.data.map((t: any) => t.id));
 
         const updatedTasks = (tasksRes.data as any[])
           .filter((st) => !st.role_id || validRoleIds.has(st.role_id))
@@ -275,18 +294,12 @@ class DBService {
             } as Task;
           });
 
-        // Retain any genuine locally added tasks that are NOT dummy initial tasks and belong to a valid active role
-        this.tasks.forEach((lt) => {
-          if (!supabaseTaskIds.has(lt.id) && !initialTaskIds.has(lt.id) && validRoleIds.has(lt.role_id)) {
-            updatedTasks.push(lt);
-          }
-        });
-
         this.tasks = updatedTasks;
         changed = true;
       }
       if (!progressRes.error && progressRes.data) {
-        this.progress = progressRes.data as UserTaskProgress[];
+        const activeTaskIds = new Set(this.tasks.map((t) => t.id));
+        this.progress = (progressRes.data as UserTaskProgress[]).filter((p) => activeTaskIds.has(p.task_id));
         changed = true;
       }
       if (!backpackRes.error && backpackRes.data && backpackRes.data.length > 0) {

@@ -86,6 +86,9 @@ export interface TaskWithProgress extends Task {
   progress?: UserTaskProgress;
   isLocked: boolean;
   isCurrentActive: boolean;
+  isDateLocked?: boolean;
+  dateLockExplanation?: string;
+  unlockDateFormatted?: string;
 }
 
 export interface UserProgressOverview {

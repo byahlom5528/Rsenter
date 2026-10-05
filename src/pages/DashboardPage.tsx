@@ -32,6 +32,8 @@ import {
   serializeBinaryAnswers 
 } from '../utils/binaryQuestions';
 import { safeScrollIntoView } from '../utils/scrollUtils';
+import { getRoleDaysInfo } from '../utils/dateUtils';
+import { evaluateTaskDateLock, parseTaskLock } from '../utils/taskLockUtils';
 
 export const DashboardPage: React.FC = () => {
   const { currentUser, currentRole, isAdmin, refreshUserData } = useAuth();
@@ -82,8 +84,8 @@ export const DashboardPage: React.FC = () => {
       setAnswersState((prev) => ({ ...initialAnswers, ...prev }));
       setBinaryAnswersState((prev) => ({ ...initialBinaryAnswers, ...prev }));
 
-      // Build sequential locking state
-      let previousTaskCompleted = true; // Task 1 is always unlocked
+      // Build sequential locking state & evaluate date-based locks
+      let previousTaskCompleted = true; // Task 1 starts unlocked sequentially
       const tasksProcessed: TaskWithProgress[] = [];
 
       for (let i = 0; i < roleTasks.length; i++) {
@@ -91,14 +93,20 @@ export const DashboardPage: React.FC = () => {
         const progress = userProgress.find((p) => p.task_id === task.id);
         const isCompleted = Boolean(progress?.is_completed);
 
-        const isLocked = !previousTaskCompleted;
-        const isCurrentActive = previousTaskCompleted && !isCompleted;
+        const dateLockStatus = evaluateTaskDateLock(task.description, currentUser?.entry_date);
+        const isDateLocked = !isCompleted && dateLockStatus.isDateLocked;
+
+        const isLocked = !previousTaskCompleted || isDateLocked;
+        const isCurrentActive = previousTaskCompleted && !isCompleted && !isDateLocked;
 
         tasksProcessed.push({
           ...task,
           progress,
           isLocked,
           isCurrentActive,
+          isDateLocked,
+          dateLockExplanation: dateLockStatus.lockExplanation,
+          unlockDateFormatted: dateLockStatus.unlockDateFormatted,
         });
 
         // Current task must be completed to unlock the next task
@@ -190,16 +198,10 @@ export const DashboardPage: React.FC = () => {
     };
   }, [tasksWithProgress]);
 
-  // Calculate days in role
-  const calculateDaysInRole = () => {
-    if (!currentUser?.entry_date) return 1;
-    const entry = new Date(currentUser.entry_date);
-    if (isNaN(entry.getTime())) return 1;
-    const now = new Date();
-    const diff = Math.floor((now.getTime() - entry.getTime()) / (1000 * 3600 * 24));
-    if (isNaN(diff)) return 1;
-    return Math.max(1, diff);
-  };
+  // Calculate days in role or days until role
+  const roleDaysInfo = useMemo(() => {
+    return getRoleDaysInfo(currentUser?.entry_date);
+  }, [currentUser?.entry_date]);
 
   const triggerConfetti = () => {
     confetti({
@@ -225,6 +227,14 @@ export const DashboardPage: React.FC = () => {
 
   const handleCompleteTask = async (task: TaskWithProgress) => {
     if (!currentUser) return;
+
+    if (task.isDateLocked && !task.progress?.is_completed) {
+      setErrorMessages({
+        ...errorMessages,
+        [task.id]: task.dateLockExplanation || 'משימה זו נעולה עד להגעת המועד המוגדר.',
+      });
+      return;
+    }
 
     if (task.type === 'binary_choice') {
       const bqList = parseBinaryQuestions(task.question_prompt);
@@ -376,9 +386,12 @@ export const DashboardPage: React.FC = () => {
                 <span className="font-semibold">{currentRole?.name || (isAdmin ? 'מנהל מערכת' : 'חניך חדש')}</span>
               </div>
 
-              <div className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-white/10">
-                <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                <span>יום {calculateDaysInRole()} בתפקיד</span>
+              <div 
+                className="flex items-center gap-1.5 bg-white/10 backdrop-blur-sm px-2.5 py-1 rounded-lg border border-white/10"
+                title={roleDaysInfo.isFuture ? `תאריך כניסה מיועד: ${currentUser?.entry_date}` : `תאריך כניסה לתפקיד: ${currentUser?.entry_date}`}
+              >
+                <Calendar className={`w-3.5 h-3.5 ${roleDaysInfo.isFuture ? 'text-amber-400' : 'text-emerald-400'}`} />
+                <span>{roleDaysInfo.text}</span>
               </div>
             </div>
           </div>
@@ -651,7 +664,12 @@ export const DashboardPage: React.FC = () => {
                             לביצוע כעת
                           </span>
                         )}
-                        {isLocked && (
+                        {task.isDateLocked && !isCompleted ? (
+                          <span className="text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Calendar className="w-2.5 h-2.5 text-amber-700" />
+                            <span>{task.unlockDateFormatted ? `נעול עד ${task.unlockDateFormatted}` : 'נעול לפי תאריך'}</span>
+                          </span>
+                        ) : isLocked && (
                           <span className="text-[10px] font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <Lock className="w-2.5 h-2.5" />
                             <span>נעול</span>
@@ -692,9 +710,20 @@ export const DashboardPage: React.FC = () => {
                 {/* Expanded Task Body */}
                 {isExpanded && (
                   <div className="p-4 sm:p-6 pt-3 sm:pt-4 border-t border-slate-100/90 space-y-4">
+                    {/* Date lock explanation banner if task is date locked */}
+                    {task.isDateLocked && !isCompleted && (
+                      <div className="rounded-xl p-3.5 bg-amber-50/90 border border-amber-200/90 text-amber-900 text-xs sm:text-sm flex items-start gap-2.5 shadow-2xs">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <div className="font-bold text-amber-950">משימה זו נעולה זמנית לפי תאריך כניסה לתפקיד</div>
+                          <div className="mt-0.5 text-amber-800 text-xs leading-relaxed">{task.dateLockExplanation}</div>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Task Instructions */}
                     <p className={`text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${isLocked ? 'text-slate-500' : 'text-slate-700'}`}>
-                      {task.description}
+                      {parseTaskLock(task.description).cleanDescription}
                     </p>
 
                   {/* MEDIA EMBED (If type === 'media_question') */}
@@ -1005,7 +1034,9 @@ export const DashboardPage: React.FC = () => {
                     <div className="pt-1 flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-500 font-medium">
                       <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                       <span>
-                        משימה זו נעולה עד להשלמת השלב הקודם ({task.step_order > 1 ? `שלב #${task.step_order - 1}` : 'השלב הקודם'}).
+                        {task.isDateLocked && !isCompleted
+                          ? task.dateLockExplanation || 'משימה זו נעולה עד להגעת המועד המוגדר.'
+                          : `משימה זו נעולה עד להשלמת השלב הקודם (${task.step_order > 1 ? `שלב #${task.step_order - 1}` : 'השלב הקודם'}).`}
                       </span>
                     </div>
                   )}

@@ -29,7 +29,9 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
-  HelpCircle
+  HelpCircle,
+  Lock,
+  Calendar
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../services/db';
@@ -48,6 +50,12 @@ import {
   serializeBinaryQuestions, 
   parseBinaryAnswers 
 } from '../utils/binaryQuestions';
+import { 
+  parseTaskLock, 
+  serializeTaskDescription, 
+  formatLockBadgeText, 
+  TaskLockConfig 
+} from '../utils/taskLockUtils';
 
 export const AdminPage: React.FC = () => {
   useAuth();
@@ -69,6 +77,12 @@ export const AdminPage: React.FC = () => {
 
   const [currentRoleTasks, setCurrentRoleTasks] = useState<Task[]>([]);
   const [editingTask, setEditingTask] = useState<Partial<Task> | null>(null);
+  const [taskLockConfig, setTaskLockConfig] = useState<TaskLockConfig>({
+    enabled: false,
+    days: 1,
+    direction: 'after',
+    offsetDays: 1,
+  });
   const [binaryQuestions, setBinaryQuestions] = useState<BinaryQuestionItem[]>([
     { id: 'bq_1', question: '', option1: 'כן', option2: 'לא' }
   ]);
@@ -258,12 +272,23 @@ export const AdminPage: React.FC = () => {
       media_url: '',
       question_prompt: '',
     });
+    setTaskLockConfig({
+      enabled: false,
+      days: 1,
+      direction: 'after',
+      offsetDays: 1,
+    });
     setBinaryQuestions([{ id: 'bq_1', question: '', option1: '', option2: '' }]);
     setIsTaskModalOpen(true);
   };
 
   const handleEditTask = (task: Task) => {
-    setEditingTask({ ...task });
+    const parsedLock = parseTaskLock(task.description);
+    setEditingTask({
+      ...task,
+      description: parsedLock.cleanDescription,
+    });
+    setTaskLockConfig(parsedLock.lockConfig);
     if (task.type === 'binary_choice') {
       const parsed = parseBinaryQuestions(task.question_prompt);
       setBinaryQuestions(parsed.length > 0 ? parsed : [{ id: 'bq_1', question: '', option1: '', option2: '' }]);
@@ -286,8 +311,14 @@ export const AdminPage: React.FC = () => {
     }
 
     try {
+      const serializedDescription = serializeTaskDescription(
+        editingTask.description || '',
+        taskLockConfig
+      );
+
       const taskToSave = {
         ...editingTask,
+        description: serializedDescription,
         media_url: editingTask.media_url?.trim() || null,
         hide_from_backpack: Boolean(editingTask.hide_from_backpack),
         question_prompt: editingTask.type === 'binary_choice'
@@ -1025,13 +1056,24 @@ export const AdminPage: React.FC = () => {
                         }`}
                       >
                         <div className="flex items-start justify-between gap-3 mb-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
                               isCompleted ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
                             }`}>
                               {task.step_order}
                             </span>
                             <h5 className="font-bold text-sm text-slate-900">{task.title}</h5>
+                            {(() => {
+                              const lockMeta = parseTaskLock(task.description);
+                              const lockBadge = formatLockBadgeText(lockMeta.lockConfig);
+                              if (!lockBadge) return null;
+                              return (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1">
+                                  <Lock className="w-2.5 h-2.5 text-amber-600" />
+                                  <span>{lockBadge}</span>
+                                </span>
+                              );
+                            })()}
                           </div>
 
                           <div className="flex items-center gap-2">
@@ -1058,7 +1100,7 @@ export const AdminPage: React.FC = () => {
                         </div>
 
                         <p className="text-xs text-slate-600 mb-2 leading-relaxed whitespace-pre-wrap">
-                          {task.description}
+                          {parseTaskLock(task.description).cleanDescription}
                         </p>
 
                         {task.type === 'binary_choice' ? (
@@ -1269,41 +1311,54 @@ export const AdminPage: React.FC = () => {
                       </button>
                     </div>
 
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <h4 className="font-bold text-slate-900 text-base">{task.title}</h4>
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                          {task.type === 'simple_check'
-                            ? 'סימון פשוט'
-                            : task.type === 'media_question'
-                            ? (task.question_prompt ? 'מדיה + שאלה' : 'צפייה במדיה')
-                            : task.type === 'binary_choice'
-                            ? (parseBinaryQuestions(task.question_prompt).length === 1 ? 'בחירה בין 2 אפשרויות' : `בחירה (${parseBinaryQuestions(task.question_prompt).length} סעיפים)`)
-                            : 'שאלת הבנה'}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-600 leading-relaxed mb-1 whitespace-pre-wrap line-clamp-2">
-                        {task.description}
-                      </p>
-                      {task.type === 'binary_choice' ? (
-                        <div className="mt-1 space-y-1">
-                          {parseBinaryQuestions(task.question_prompt).map((bq, i) => (
-                            <div key={bq.id || i} className="text-xs text-slate-800 flex items-center gap-1.5 font-medium">
-                              <span>🔘 {bq.question ? `${i + 1}. ${bq.question}` : `בחירה #${i + 1}`}</span>
-                              <span className="text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
-                                [{bq.option1} / {bq.option2}]
+                    {(() => {
+                      const lockMeta = parseTaskLock(task.description);
+                      const lockBadge = formatLockBadgeText(lockMeta.lockConfig);
+
+                      return (
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <h4 className="font-bold text-slate-900 text-base">{task.title}</h4>
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                              {task.type === 'simple_check'
+                                ? 'סימון פשוט'
+                                : task.type === 'media_question'
+                                ? (task.question_prompt ? 'מדיה + שאלה' : 'צפייה במדיה')
+                                : task.type === 'binary_choice'
+                                ? (parseBinaryQuestions(task.question_prompt).length === 1 ? 'בחירה בין 2 אפשרויות' : `בחירה (${parseBinaryQuestions(task.question_prompt).length} סעיפים)`)
+                                : 'שאלת הבנה'}
+                            </span>
+                            {lockBadge && (
+                              <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-900 border border-amber-300 flex items-center gap-1">
+                                <Lock className="w-3 h-3 text-amber-600" />
+                                <span>{lockBadge}</span>
                               </span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        task.question_prompt && (
-                          <p className="text-xs text-brand-700 font-medium whitespace-pre-wrap">
-                            ❓ שאלת אימות: {task.question_prompt}
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-600 leading-relaxed mb-1 whitespace-pre-wrap line-clamp-2">
+                            {lockMeta.cleanDescription}
                           </p>
-                        )
-                      )}
-                    </div>
+                          {task.type === 'binary_choice' ? (
+                            <div className="mt-1 space-y-1">
+                              {parseBinaryQuestions(task.question_prompt).map((bq, i) => (
+                                <div key={bq.id || i} className="text-xs text-slate-800 flex items-center gap-1.5 font-medium">
+                                  <span>🔘 {bq.question ? `${i + 1}. ${bq.question}` : `בחירה #${i + 1}`}</span>
+                                  <span className="text-[10px] text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
+                                    [{bq.option1} / {bq.option2}]
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            task.question_prompt && (
+                              <p className="text-xs text-brand-700 font-medium whitespace-pre-wrap">
+                                ❓ שאלת אימות: {task.question_prompt}
+                              </p>
+                            )
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Actions */}
@@ -1615,6 +1670,114 @@ export const AdminPage: React.FC = () => {
                       )}
                     </div>
                   )}
+
+                  {/* OPTIONAL DATE-BASED TASK LOCKING */}
+                  <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/80 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${taskLockConfig.enabled ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-500'}`}>
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-slate-800 block cursor-pointer select-none">
+                            נעילת משימה לפי תאריך כניסה לתפקיד (אופציונלי)
+                          </label>
+                          <p className="text-[11px] text-slate-500">
+                            המשימה תהיה נעולה לחניך עד למועד שיוגדר ביחס לתאריך הכניסה
+                          </p>
+                        </div>
+                      </div>
+
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={taskLockConfig.enabled}
+                          onChange={(e) => setTaskLockConfig(prev => ({ ...prev, enabled: e.target.checked }))}
+                          className="w-4 h-4 text-amber-600 rounded border-slate-300 focus:ring-amber-500"
+                        />
+                        <span className="text-xs font-bold text-slate-700">הפעל</span>
+                      </label>
+                    </div>
+
+                    {taskLockConfig.enabled && (
+                      <div className="pt-3 border-t border-slate-200/80 space-y-3 animate-in fade-in duration-150">
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 mb-1.5">מועד פתיחת המשימה לחניך:</label>
+                          <div className="grid grid-cols-3 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setTaskLockConfig(prev => ({ ...prev, direction: 'before' }))}
+                              className={`py-2 px-2 rounded-xl font-bold text-xs border text-center transition-all ${
+                                taskLockConfig.direction === 'before'
+                                  ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                              }`}
+                            >
+                              לפני הכניסה לתפקיד
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setTaskLockConfig(prev => ({ ...prev, direction: 'on_day' }))}
+                              className={`py-2 px-2 rounded-xl font-bold text-xs border text-center transition-all ${
+                                taskLockConfig.direction === 'on_day'
+                                  ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                              }`}
+                            >
+                              ביום הכניסה בדיוק
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setTaskLockConfig(prev => ({ ...prev, direction: 'after' }))}
+                              className={`py-2 px-2 rounded-xl font-bold text-xs border text-center transition-all ${
+                                taskLockConfig.direction === 'after'
+                                  ? 'bg-amber-500 text-white border-amber-500 shadow-xs'
+                                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                              }`}
+                            >
+                              לאחר הכניסה לתפקיד
+                            </button>
+                          </div>
+                        </div>
+
+                        {taskLockConfig.direction !== 'on_day' && (
+                          <div>
+                            <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                              {taskLockConfig.direction === 'before' ? 'כמה ימים לפני הכניסה לתפקיד?' : 'כמה ימים לאחר הכניסה לתפקיד?'}
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={1}
+                                max={365}
+                                value={taskLockConfig.days || 1}
+                                onChange={(e) => {
+                                  const val = parseInt(e.target.value, 10);
+                                  setTaskLockConfig(prev => ({ ...prev, days: isNaN(val) || val < 1 ? 1 : val }));
+                                }}
+                                className="w-24 px-3 py-1.5 rounded-xl border border-slate-300 font-bold text-center text-sm outline-none focus:border-amber-500 bg-white"
+                              />
+                              <span className="text-xs text-slate-600 font-medium">ימים</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Real-time Hebrew preview explanation */}
+                        <div className="p-2.5 rounded-xl bg-amber-100/70 border border-amber-200 text-amber-950 text-xs flex items-center gap-2">
+                          <Calendar className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+                          <span className="font-medium">
+                            {taskLockConfig.direction === 'before'
+                              ? `המשימה תיפתח לביצוע ${taskLockConfig.days} ימים לפני תאריך הכניסה לתפקיד של החניך.`
+                              : taskLockConfig.direction === 'on_day'
+                              ? 'המשימה תיפתח לביצוע ביום הכניסה לתפקיד של החניך בדיוק.'
+                              : `המשימה תיפתח לביצוע ${taskLockConfig.days} ימים לאחר תאריך הכניסה לתפקיד של החניך.`}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
                   <div className="pt-3 border-t border-slate-100 flex justify-end gap-2">
                     <button
